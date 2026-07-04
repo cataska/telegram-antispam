@@ -15,6 +15,7 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
   // 1. 新成員禁止發連結
   if (!verifiedUsers.has(key) && containsLink(text)) {
     await ctx.deleteMessage();
+    console.log(`[連結過濾] 刪除未驗證用戶 ${userId} 的訊息（含連結）`);
     return;
   }
 
@@ -28,6 +29,7 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
       until_date: until,
     });
     await ctx.reply(`${ctx.from?.first_name} 發送訊息過於頻繁，已禁言 5 分鐘。`);
+    console.log(`[洪水偵測] 用戶 ${userId} 發送過於頻繁，禁言 5 分鐘`);
     return;
   }
 

@@ -3,7 +3,7 @@ import { pendingUsers, PendingUser } from '../store/pending.js';
 import { generateCaptcha } from '../services/captcha.js';
 import { InlineKeyboard } from 'grammy';
 
-const VERIFY_TIMEOUT_MS = 60_000; // 60 秒
+const VERIFY_TIMEOUT_MS = 180_000; // 180 秒
 
 export async function handleNewMember(ctx: Context) {
   const update = ctx.chatMember;
@@ -41,28 +41,36 @@ export async function handleNewMember(ctx: Context) {
     messageId: 0,
   };
 
-  // 建立按鈕
+  // 建立按鈕（選項垂直排列）
   const keyboard = new InlineKeyboard();
-  captcha.options.forEach((option, index) => {
-    keyboard.text(option, `verify:${userId}:${option}`);
-    if (index < captcha.options.length - 1) keyboard.row();
+  captcha.options.forEach((option) => {
+    keyboard.text(option, `verify:${userId}:${option}`).row();
   });
+
+  // 管理員快捷按鈕（水平排列）
+  keyboard
+    .text('通過[✅]', `admin:${userId}:pass`)
+    .text('封鎖[🚫]', `admin:${userId}:ban`)
+    .text('禁言[🔇]', `admin:${userId}:mute`);
 
   // 發送驗證訊息
   const message = await ctx.api.sendMessage(
     chatId,
-    `歡迎 ${user.first_name}！請在 60 秒內回答問題：\n\n${captcha.question}`,
+    `🤖 入群驗證\n${user.first_name}，請在 180 秒內回答問題\nPlease answer within 180 seconds\n\n${captcha.question}`,
     { reply_markup: keyboard }
   );
 
   pending.messageId = message.message_id;
   pendingUsers.set(`${chatId}:${userId}`, pending);
 
+  console.log(`[新成員] ${user.first_name} (${userId}) 加入群組 ${chatId}，等待驗證`);
+
   // 設定超時
   setTimeout(async () => {
     const key = `${chatId}:${userId}`;
     if (pendingUsers.has(key)) {
       pendingUsers.delete(key);
+      console.log(`[超時] 用戶 ${userId} 驗證超時，已踢出群組 ${chatId}`);
       try {
         await ctx.api.banChatMember(chatId, userId);
         await ctx.api.unbanChatMember(chatId, userId); // 允許重新加入
