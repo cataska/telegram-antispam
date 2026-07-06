@@ -1,6 +1,5 @@
 import { Context } from 'grammy';
-import { pendingUsers } from '../store/pending.js';
-import { verifiedUsers } from '../store/verified.js';
+import { pendingUsers, PendingUser } from '../store/pending.js';
 
 export async function handleCallback(ctx: Context) {
   const data = ctx.callbackQuery?.data;
@@ -24,6 +23,25 @@ export async function handleCallback(ctx: Context) {
   }
 }
 
+// 完成驗證流程：移除待驗證記錄並取消超時 timer
+function resolvePending(key: string, pending: PendingUser | undefined) {
+  pendingUsers.delete(key);
+  if (pending?.timer) {
+    clearTimeout(pending.timer);
+  }
+}
+
+// 以群組預設權限恢復發言，避免給新成員比群組設定更寬的權限
+async function liftRestrictions(ctx: Context, chatId: number, userId: number) {
+  const chat = await ctx.api.getChat(chatId);
+  const permissions = chat.permissions ?? {
+    can_send_messages: true,
+    can_send_other_messages: true,
+    can_add_web_page_previews: true,
+  };
+  await ctx.api.restrictChatMember(chatId, userId, permissions);
+}
+
 async function handleAdminAction(
   ctx: Context,
   data: string,
@@ -39,23 +57,16 @@ async function handleAdminAction(
     return;
   }
 
-  const [, oderId, action] = data.split(':');
-  const userId = Number(oderId);
+  const [, targetId, action] = data.split(':');
+  const userId = Number(targetId);
   const key = `${chatId}:${userId}`;
   const pending = pendingUsers.get(key);
 
   switch (action) {
     case 'pass':
       // 直接通過驗證
-      pendingUsers.delete(key);
-      verifiedUsers.add(key);
-      await ctx.api.restrictChatMember(chatId, userId, {
-        permissions: {
-          can_send_messages: true,
-          can_send_other_messages: true,
-          can_add_web_page_previews: true,
-        },
-      });
+      resolvePending(key, pending);
+      await liftRestrictions(ctx, chatId, userId);
       await ctx.answerCallbackQuery({ text: '已通過驗證' });
       if (pending) {
         await ctx.api.deleteMessage(chatId, pending.messageId);
@@ -65,7 +76,7 @@ async function handleAdminAction(
 
     case 'ban':
       // 封鎖用戶
-      pendingUsers.delete(key);
+      resolvePending(key, pending);
       await ctx.api.banChatMember(chatId, userId);
       await ctx.answerCallbackQuery({ text: '已封鎖用戶' });
       if (pending) {
@@ -76,12 +87,14 @@ async function handleAdminAction(
 
     case 'mute':
       // 禁言 24 小時
-      pendingUsers.delete(key);
+      resolvePending(key, pending);
       const until = Math.floor(Date.now() / 1000) + 86400;
-      await ctx.api.restrictChatMember(chatId, userId, {
-        permissions: { can_send_messages: false },
-        until_date: until,
-      });
+      await ctx.api.restrictChatMember(
+        chatId,
+        userId,
+        { can_send_messages: false },
+        { until_date: until }
+      );
       await ctx.answerCallbackQuery({ text: '已禁言 24 小時' });
       if (pending) {
         await ctx.api.deleteMessage(chatId, pending.messageId);
@@ -97,8 +110,8 @@ async function handleVerifyAction(
   chatId: number,
   callerId: number
 ) {
-  const [, oderId, answer] = data.split(':');
-  const userId = Number(oderId);
+  const [, targetId, answer] = data.split(':');
+  const userId = Number(targetId);
 
   // 只有本人可以回答
   if (callerId !== userId) {
@@ -116,24 +129,17 @@ async function handleVerifyAction(
 
   if (answer === pending.correctAnswer) {
     // 驗證成功
-    pendingUsers.delete(key);
-    verifiedUsers.add(key);
+    resolvePending(key, pending);
 
     // 恢復發言權限
-    await ctx.api.restrictChatMember(chatId, callerId, {
-      permissions: {
-        can_send_messages: true,
-        can_send_other_messages: true,
-        can_add_web_page_previews: true,
-      },
-    });
+    await liftRestrictions(ctx, chatId, callerId);
 
     await ctx.answerCallbackQuery({ text: '驗證成功！' });
     await ctx.api.deleteMessage(chatId, pending.messageId);
     console.log(`[驗證成功] 用戶 ${userId} 通過驗證`);
   } else {
     // 驗證失敗
-    pendingUsers.delete(key);
+    resolvePending(key, pending);
 
     await ctx.api.banChatMember(chatId, callerId);
     await ctx.api.unbanChatMember(chatId, callerId); // 允許重新加入

@@ -51,8 +51,12 @@ export function generateCaptcha(): Captcha {
   const index = Math.floor(Math.random() * QUESTIONS.length);
   const captcha = QUESTIONS[index];
 
-  // 打亂選項順序
-  const shuffledOptions = [...captcha.options].sort(() => Math.random() - 0.5);
+  // 打亂選項順序（Fisher–Yates）
+  const shuffledOptions = [...captcha.options];
+  for (let i = shuffledOptions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffledOptions[i], shuffledOptions[j]] = [shuffledOptions[j], shuffledOptions[i]];
+  }
 
   return {
     question: captcha.question,

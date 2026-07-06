@@ -4,6 +4,7 @@ export interface PendingUser {
   correctAnswer: string;
   joinedAt: number;
   messageId: number;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 // key: chatId:userId
