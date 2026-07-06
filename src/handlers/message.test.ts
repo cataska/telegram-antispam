@@ -8,6 +8,7 @@ interface CtxOptions {
   userId: number;
   chatType?: string;
   text?: string;
+  mediaGroupId?: string;
   memberStatus?: string;
 }
 
@@ -15,7 +16,7 @@ function makeCtx(opts: CtxOptions) {
   return {
     chat: { id: opts.chatId, type: opts.chatType ?? 'supergroup' },
     from: { id: opts.userId, first_name: 'Test' },
-    message: { text: opts.text ?? '' },
+    message: { text: opts.text ?? '', media_group_id: opts.mediaGroupId },
     deleteMessage: vi.fn().mockResolvedValue(true),
     reply: vi.fn().mockResolvedValue({}),
     api: {
@@ -94,6 +95,18 @@ describe('handleMessage', () => {
       expect.objectContaining({ until_date: expect.any(Number) })
     );
     expect(ctx.reply).toHaveBeenCalled();
+  });
+
+  it('傳相簿（同 media_group_id 的多則訊息）不會被誤判洪水', async () => {
+    const next = vi.fn();
+    let ctx;
+    // 一組 8 張的相簿：Telegram 會拆成 8 則幾乎同時抵達的訊息
+    for (let i = 0; i < 8; i++) {
+      ctx = makeCtx({ chatId, userId, mediaGroupId: 'album-1' });
+      await handleMessage(ctx, next);
+    }
+
+    expect(ctx.api.restrictChatMember).not.toHaveBeenCalled();
   });
 
   it('管理員洪水發言不會被禁言', async () => {

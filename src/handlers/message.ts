@@ -24,7 +24,7 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
   }
 
   // 2. 洪水偵測（管理員豁免）
-  const isFlooding = checkRateLimit(chatId, userId);
+  const isFlooding = checkRateLimit(chatId, userId, ctx.message?.media_group_id);
   if (isFlooding) {
     const member = await ctx.api.getChatMember(chatId, userId);
     if (member.status === 'administrator' || member.status === 'creator') {
