@@ -52,4 +52,25 @@ describe('handleServiceMessage', () => {
 
     expect(ctx.api.deleteMessage).not.toHaveBeenCalled();
   });
+
+  it('多成員訊息：命中剛被移除者即刪除整則訊息並停止，後續成員不再記錄', async () => {
+    // 成員 43 驗證中、成員 42 剛被移除；42 排在 43 前面
+    addPending(
+      { userId: 43, chatId, correctAnswer: '2', joinedAt: Date.now(), captchaMessageId: 98 },
+      180_000,
+      () => {}
+    );
+    markRemoved(chatId, 42);
+    const ctx = makeCtx(chatId, [
+      { id: 7, is_bot: true },
+      { id: 42, is_bot: false },
+      { id: 43, is_bot: false },
+    ]);
+
+    await handleServiceMessage(ctx);
+
+    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(chatId, 777);
+    // 刪除後即停止：43 的 pending 不會被補記 join_message_id
+    expect(getPending(chatId, 43)?.joinMessageId).toBeUndefined();
+  });
 });
