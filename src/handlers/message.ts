@@ -1,9 +1,8 @@
 import { Context, NextFunction } from 'grammy';
-import { pendingUsers } from '../store/pending.js';
+import { getPending } from '../store/pending.js';
 import { checkRateLimit } from '../services/rateLimit.js';
 import { containsLink } from '../services/linkFilter.js';
-
-const MUTE_SECONDS = 300;
+import { config } from '../config.js';
 
 export async function handleMessage(ctx: Context, next: NextFunction) {
   const chat = ctx.chat;
@@ -16,10 +15,9 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
 
   const chatId = chat.id;
   const text = ctx.message?.text || ctx.message?.caption || '';
-  const key = `${chatId}:${userId}`;
 
   // 1. 驗證中的新成員禁止發連結
-  if (pendingUsers.has(key) && containsLink(text)) {
+  if (getPending(chatId, userId) && containsLink(text)) {
     await ctx.deleteMessage();
     console.log(`[連結過濾] 刪除驗證中用戶 ${userId} 的訊息（含連結）`);
     return;
@@ -33,16 +31,15 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
       return next();
     }
 
-    // 禁言 5 分鐘
-    const until = Math.floor(Date.now() / 1000) + MUTE_SECONDS;
+    const until = Math.floor(Date.now() / 1000) + config.floodMuteSeconds;
     await ctx.api.restrictChatMember(
       chatId,
       userId,
       { can_send_messages: false },
       { until_date: until }
     );
-    await ctx.reply(`${ctx.from?.first_name} 發送訊息過於頻繁，已禁言 5 分鐘。`);
-    console.log(`[洪水偵測] 用戶 ${userId} 發送過於頻繁，禁言 5 分鐘`);
+    await ctx.reply(`${ctx.from?.first_name} 發送訊息過於頻繁，已禁言 ${config.floodMuteSeconds / 60} 分鐘。`);
+    console.log(`[洪水偵測] 用戶 ${userId} 發送過於頻繁，禁言 ${config.floodMuteSeconds / 60} 分鐘`);
     return;
   }
 

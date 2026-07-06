@@ -1,9 +1,9 @@
 import { Context } from 'grammy';
-import { pendingUsers, PendingUser } from '../store/pending.js';
+import { addPending, PendingUser } from '../store/pending.js';
 import { generateCaptcha } from '../services/captcha.js';
 import { InlineKeyboard } from 'grammy';
-
-const VERIFY_TIMEOUT_MS = 180_000; // 180 秒
+import { config } from '../config.js';
+import { kickAndCleanup } from './pendingActions.js';
 
 export async function handleNewMember(ctx: Context) {
   const update = ctx.chatMember;
@@ -21,13 +21,6 @@ export async function handleNewMember(ctx: Context) {
 
   const chatId = chat.id;
   const userId = user.id;
-  const key = `${chatId}:${userId}`;
-
-  // 若同一用戶已有進行中的驗證（例如快速退群重進），先取消舊的超時 timer
-  const existing = pendingUsers.get(key);
-  if (existing?.timer) {
-    clearTimeout(existing.timer);
-  }
 
   // 限制新成員發言
   await ctx.api.restrictChatMember(chatId, userId, {
@@ -38,15 +31,6 @@ export async function handleNewMember(ctx: Context) {
 
   // 產生驗證題目
   const captcha = generateCaptcha();
-
-  // 儲存待驗證狀態
-  const pending: PendingUser = {
-    userId,
-    chatId,
-    correctAnswer: captcha.correctAnswer,
-    joinedAt: Date.now(),
-    messageId: 0,
-  };
 
   // 建立按鈕（選項垂直排列）
   const keyboard = new InlineKeyboard();
@@ -60,31 +44,27 @@ export async function handleNewMember(ctx: Context) {
     .text('封鎖[🚫]', `admin:${userId}:ban`)
     .text('禁言[🔇]', `admin:${userId}:mute`);
 
+  const timeoutSeconds = config.verifyTimeoutMs / 1000;
+
   // 發送驗證訊息
   const message = await ctx.api.sendMessage(
     chatId,
-    `🤖 入群驗證\n${user.first_name}，請在 180 秒內回答問題\nPlease answer within 180 seconds\n\n${captcha.question}`,
+    `🤖 入群驗證\n${user.first_name}，請在 ${timeoutSeconds} 秒內回答問題\nPlease answer within ${timeoutSeconds} seconds\n\n${captcha.question}`,
     { reply_markup: keyboard }
   );
 
-  pending.messageId = message.message_id;
-  pendingUsers.set(key, pending);
+  const pending: PendingUser = {
+    userId,
+    chatId,
+    correctAnswer: captcha.correctAnswer,
+    joinedAt: Date.now(),
+    captchaMessageId: message.message_id,
+  };
 
   console.log(`[新成員] ${user.first_name} (${userId}) 加入群組 ${chatId}，等待驗證`);
 
-  // 設定超時；只在 pending 記錄仍是「這一次入群」時才踢人，
-  // 避免用戶被踢後重新入群、卻被上一次的 timer 誤踢
-  pending.timer = setTimeout(async () => {
-    if (pendingUsers.get(key) !== pending) return;
-
-    pendingUsers.delete(key);
-    console.log(`[超時] 用戶 ${userId} 驗證超時，已踢出群組 ${chatId}`);
-    try {
-      await ctx.api.banChatMember(chatId, userId);
-      await ctx.api.unbanChatMember(chatId, userId); // 允許重新加入
-      await ctx.api.deleteMessage(chatId, message.message_id);
-    } catch (e) {
-      // 忽略錯誤
-    }
-  }, VERIFY_TIMEOUT_MS);
+  addPending(pending, config.verifyTimeoutMs, async (p) => {
+    console.log(`[超時] 用戶 ${p.userId} 驗證超時，已踢出群組 ${p.chatId}`);
+    await kickAndCleanup(ctx.api, p);
+  });
 }

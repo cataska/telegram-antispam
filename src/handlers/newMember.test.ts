@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleNewMember } from './newMember.js';
-import { pendingUsers } from '../store/pending.js';
+import { initPendingStore, getPending } from '../store/pending.js';
+import { openDb } from '../db.js';
 
 const chatId = -100123;
 const user = { id: 42, is_bot: false, first_name: 'New' };
@@ -25,10 +26,16 @@ function makeCtx(oldStatus: string, newStatus: string) {
 describe('handleNewMember', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    pendingUsers.clear();
+    initPendingStore(openDb(':memory:'));
+    // 避免 CAS 檢查打到真實網路（Task 7 之前 handler 尚未接 CAS，先備妥 stub 也無害）
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: false }),
+    }));
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -39,7 +46,7 @@ describe('handleNewMember', () => {
 
     expect(ctx.api.restrictChatMember).toHaveBeenCalled();
     expect(ctx.api.sendMessage).toHaveBeenCalled();
-    expect(pendingUsers.has(`${chatId}:${user.id}`)).toBe(true);
+    expect(getPending(chatId, user.id)).toBeDefined();
   });
 
   it('管理員被降級（administrator → member）不觸發驗證', async () => {
@@ -49,7 +56,7 @@ describe('handleNewMember', () => {
 
     expect(ctx.api.restrictChatMember).not.toHaveBeenCalled();
     expect(ctx.api.sendMessage).not.toHaveBeenCalled();
-    expect(pendingUsers.has(`${chatId}:${user.id}`)).toBe(false);
+    expect(getPending(chatId, user.id)).toBeUndefined();
   });
 
   it('解除禁言（restricted → member）不觸發驗證', async () => {
@@ -58,7 +65,7 @@ describe('handleNewMember', () => {
     await handleNewMember(ctx);
 
     expect(ctx.api.restrictChatMember).not.toHaveBeenCalled();
-    expect(pendingUsers.has(`${chatId}:${user.id}`)).toBe(false);
+    expect(getPending(chatId, user.id)).toBeUndefined();
   });
 
   it('驗證超時會踢出用戶並刪除驗證訊息', async () => {
@@ -69,28 +76,24 @@ describe('handleNewMember', () => {
 
     expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, user.id);
     expect(ctx.api.unbanChatMember).toHaveBeenCalledWith(chatId, user.id);
-    expect(pendingUsers.has(`${chatId}:${user.id}`)).toBe(false);
+    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(chatId, 99);
+    expect(getPending(chatId, user.id)).toBeUndefined();
   });
 
   it('超時前重新入群，第一次的超時 timer 不會誤踢第二次驗證', async () => {
-    // 第一次入群
     const ctx1 = makeCtx('left', 'member');
     await handleNewMember(ctx1);
 
-    // 100 秒後答錯被踢（callback 會刪除 pending），隨即重新入群
     await vi.advanceTimersByTimeAsync(100_000);
-    pendingUsers.delete(`${chatId}:${user.id}`);
     const ctx2 = makeCtx('kicked', 'member');
     await handleNewMember(ctx2);
 
-    // 到第一次入群的 180 秒時限：不應踢人（第二次驗證還剩 100 秒）
-    await vi.advanceTimersByTimeAsync(85_000);
+    await vi.advanceTimersByTimeAsync(85_000); // 第一次的 180 秒已過
     expect(ctx1.api.banChatMember).not.toHaveBeenCalled();
     expect(ctx2.api.banChatMember).not.toHaveBeenCalled();
-    expect(pendingUsers.has(`${chatId}:${user.id}`)).toBe(true);
+    expect(getPending(chatId, user.id)).toBeDefined();
 
-    // 第二次的 180 秒到期才踢
-    await vi.advanceTimersByTimeAsync(100_000);
+    await vi.advanceTimersByTimeAsync(100_000); // 第二次的 180 秒到期
     expect(ctx2.api.banChatMember).toHaveBeenCalled();
   });
 });

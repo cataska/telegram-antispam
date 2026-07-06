@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { Bot } from 'grammy';
 import { setupHandlers } from './handlers/index.js';
+import { openDb } from './db.js';
+import { config } from './config.js';
+import { initPendingStore } from './store/pending.js';
 
 const token = process.env.BOT_TOKEN;
 if (!token) {
@@ -8,6 +11,8 @@ if (!token) {
 }
 
 const bot = new Bot(token);
+
+initPendingStore(openDb(config.dbPath));
 
 setupHandlers(bot);
 

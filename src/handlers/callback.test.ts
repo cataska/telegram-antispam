@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleCallback } from './callback.js';
-import { pendingUsers } from '../store/pending.js';
+import { initPendingStore, addPending, getPending, attachJoinMessage } from '../store/pending.js';
+import { openDb } from '../db.js';
 
 const chatId = -100456;
 const userId = 42;
 const adminId = 7;
-const key = `${chatId}:${userId}`;
 
-// 群組預設權限：禁止連結預覽（用來驗證恢復權限時採用群組設定而非硬編碼全開）
 const chatPermissions = {
   can_send_messages: true,
   can_send_other_messages: true,
@@ -32,25 +31,21 @@ function makeCtx(data: string, callerId: number, callerStatus = 'member') {
 }
 
 function setPending() {
-  pendingUsers.set(key, {
-    userId,
-    chatId,
-    correctAnswer: '2',
-    joinedAt: Date.now(),
-    messageId: 99,
-    timer: setTimeout(() => {}, 180_000),
-  });
+  addPending(
+    { userId, chatId, correctAnswer: '2', joinedAt: Date.now(), captchaMessageId: 99 },
+    180_000,
+    () => {}
+  );
 }
 
 describe('handleCallback', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    pendingUsers.clear();
+    initPendingStore(openDb(':memory:'));
     setPending();
   });
 
   afterEach(() => {
-    vi.clearAllTimers();
     vi.useRealTimers();
   });
 
@@ -59,12 +54,8 @@ describe('handleCallback', () => {
 
     await handleCallback(ctx);
 
-    expect(ctx.api.restrictChatMember).toHaveBeenCalledWith(
-      chatId,
-      userId,
-      chatPermissions
-    );
-    expect(pendingUsers.has(key)).toBe(false);
+    expect(ctx.api.restrictChatMember).toHaveBeenCalledWith(chatId, userId, chatPermissions);
+    expect(getPending(chatId, userId)).toBeUndefined();
   });
 
   it('答對後清除超時 timer', async () => {
@@ -75,13 +66,16 @@ describe('handleCallback', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('答錯會被踢出並允許重新加入', async () => {
+  it('答錯會被踢出，驗證訊息與入群訊息一併刪除', async () => {
+    attachJoinMessage(chatId, userId, 123);
     const ctx = makeCtx(`verify:${userId}:3`, userId);
 
     await handleCallback(ctx);
 
     expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
     expect(ctx.api.unbanChatMember).toHaveBeenCalledWith(chatId, userId);
+    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(chatId, 99);
+    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(chatId, 123);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -91,7 +85,7 @@ describe('handleCallback', () => {
     await handleCallback(ctx);
 
     expect(ctx.api.restrictChatMember).not.toHaveBeenCalled();
-    expect(pendingUsers.has(key)).toBe(true);
+    expect(getPending(chatId, userId)).toBeDefined();
   });
 
   it('管理員手動通過時以群組預設權限恢復發言並清除 timer', async () => {
@@ -99,12 +93,18 @@ describe('handleCallback', () => {
 
     await handleCallback(ctx);
 
-    expect(ctx.api.restrictChatMember).toHaveBeenCalledWith(
-      chatId,
-      userId,
-      chatPermissions
-    );
+    expect(ctx.api.restrictChatMember).toHaveBeenCalledWith(chatId, userId, chatPermissions);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('管理員封鎖時入群訊息一併刪除', async () => {
+    attachJoinMessage(chatId, userId, 123);
+    const ctx = makeCtx(`admin:${userId}:ban`, adminId, 'administrator');
+
+    await handleCallback(ctx);
+
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
+    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(chatId, 123);
   });
 
   it('非管理員點管理員按鈕會被拒絕', async () => {
@@ -113,6 +113,6 @@ describe('handleCallback', () => {
     await handleCallback(ctx);
 
     expect(ctx.api.banChatMember).not.toHaveBeenCalled();
-    expect(pendingUsers.has(key)).toBe(true);
+    expect(getPending(chatId, userId)).toBeDefined();
   });
 });

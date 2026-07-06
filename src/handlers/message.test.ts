@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleMessage } from './message.js';
-import { pendingUsers } from '../store/pending.js';
+import { initPendingStore, addPending } from '../store/pending.js';
+import { openDb } from '../db.js';
 
 interface CtxOptions {
   chatId: number;
@@ -35,7 +36,7 @@ describe('handleMessage', () => {
 
   beforeEach(() => {
     chatId = nextChatId++;
-    pendingUsers.clear();
+    initPendingStore(openDb(':memory:'));
   });
 
   it('私聊訊息不處理，直接放行', async () => {
@@ -49,13 +50,11 @@ describe('handleMessage', () => {
   });
 
   it('驗證中的新成員發連結會被刪除', async () => {
-    pendingUsers.set(`${chatId}:${userId}`, {
-      userId,
-      chatId,
-      correctAnswer: '2',
-      joinedAt: Date.now(),
-      messageId: 1,
-    } as any);
+    addPending(
+      { userId, chatId, correctAnswer: '2', joinedAt: Date.now(), captchaMessageId: 1 },
+      180_000,
+      () => {}
+    );
     const ctx = makeCtx({ chatId, userId, text: '快來 https://spam.com' });
     const next = vi.fn();
 
