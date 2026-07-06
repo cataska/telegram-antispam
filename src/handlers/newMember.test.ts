@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleNewMember } from './newMember.js';
 import { initPendingStore, getPending } from '../store/pending.js';
 import { openDb } from '../db.js';
+import { recordJoin } from '../services/joinFlood.js';
 
 const chatId = -100123;
 const user = { id: 42, is_bot: false, first_name: 'New' };
@@ -95,5 +96,45 @@ describe('handleNewMember', () => {
 
     await vi.advanceTimersByTimeAsync(100_000); // 第二次的 180 秒到期
     expect(ctx2.api.banChatMember).toHaveBeenCalled();
+  });
+
+  it('CAS 命中者直接永久封鎖，不出驗證題', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    }));
+    const ctx = makeCtx('left', 'member');
+
+    await handleNewMember(ctx);
+
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, user.id);
+    expect(ctx.api.unbanChatMember).not.toHaveBeenCalled(); // 永久封鎖
+    expect(ctx.api.sendMessage).not.toHaveBeenCalled();
+    expect(getPending(chatId, user.id)).toBeUndefined();
+  });
+
+  it('戒備模式中新加入者被踢出（可重新加入），剛觸發時發通知', async () => {
+    const alertChatId = -100999;
+    const floodOpts = { windowMs: 60_000, maxJoins: 10, cooldownMs: 300_000 };
+    // 先灌 10 次讓下一次入群觸發戒備
+    for (let i = 0; i < 10; i++) recordJoin(alertChatId, floodOpts);
+
+    const makeAlertCtx = () => {
+      const ctx = makeCtx('left', 'member');
+      ctx.chatMember.chat.id = alertChatId;
+      return ctx;
+    };
+
+    const first = makeAlertCtx();
+    await handleNewMember(first);
+    expect(first.api.banChatMember).toHaveBeenCalledWith(alertChatId, user.id);
+    expect(first.api.unbanChatMember).toHaveBeenCalledWith(alertChatId, user.id);
+    expect(first.api.sendMessage).toHaveBeenCalledTimes(1); // 戒備通知
+    expect(getPending(alertChatId, user.id)).toBeUndefined();
+
+    const second = makeAlertCtx();
+    await handleNewMember(second);
+    expect(second.api.banChatMember).toHaveBeenCalled();
+    expect(second.api.sendMessage).not.toHaveBeenCalled(); // 通知只發一次
   });
 });

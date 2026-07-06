@@ -4,6 +4,9 @@ import { generateCaptcha } from '../services/captcha.js';
 import { InlineKeyboard } from 'grammy';
 import { config } from '../config.js';
 import { kickAndCleanup } from './pendingActions.js';
+import { isCasBanned } from '../services/cas.js';
+import { recordJoin } from '../services/joinFlood.js';
+import { markRemoved } from '../store/recentlyRemoved.js';
 
 export async function handleNewMember(ctx: Context) {
   const update = ctx.chatMember;
@@ -21,6 +24,34 @@ export async function handleNewMember(ctx: Context) {
 
   const chatId = chat.id;
   const userId = user.id;
+
+  // 1. 入群洪水檢查：戒備模式中直接踢出（可重新加入）
+  const flood = recordJoin(chatId);
+  if (flood.inAlert) {
+    markRemoved(chatId, userId);
+    await ctx.api.banChatMember(chatId, userId);
+    await ctx.api.unbanChatMember(chatId, userId); // 允許稍後重新加入
+    console.log(`[入群洪水] 戒備模式中踢出用戶 ${userId}（群組 ${chatId}）`);
+    if (flood.justEntered) {
+      try {
+        await ctx.api.sendMessage(
+          chatId,
+          '⚠️ 偵測到大量帳號短時間湧入，已進入戒備模式：期間新加入的成員將被暫時移除，稍後可重新加入。'
+        );
+      } catch {
+        // 通知失敗不影響防護
+      }
+    }
+    return;
+  }
+
+  // 2. CAS 檢查：已知 spammer 直接永久封鎖
+  if (await isCasBanned(userId)) {
+    markRemoved(chatId, userId);
+    await ctx.api.banChatMember(chatId, userId);
+    console.log(`[CAS] 用戶 ${userId} 在 CAS 名單上，已永久封鎖（群組 ${chatId}）`);
+    return;
+  }
 
   // 限制新成員發言
   await ctx.api.restrictChatMember(chatId, userId, {
