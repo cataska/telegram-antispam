@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleMessage } from './message.js';
 import { initPendingStore, addPending } from '../store/pending.js';
 import { openDb } from '../db.js';
@@ -35,8 +35,13 @@ describe('handleMessage', () => {
   const userId = 42;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     chatId = nextChatId++;
     initPendingStore(openDb(':memory:'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('私聊訊息不處理，直接放行', async () => {

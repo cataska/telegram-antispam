@@ -4,7 +4,8 @@ import { initPendingStore, getPending } from '../store/pending.js';
 import { openDb } from '../db.js';
 import { recordJoin } from '../services/joinFlood.js';
 
-const chatId = -100123;
+let nextChatId = -100123;
+let chatId: number;
 const user = { id: 42, is_bot: false, first_name: 'New' };
 
 function makeCtx(oldStatus: string, newStatus: string) {
@@ -26,6 +27,7 @@ function makeCtx(oldStatus: string, newStatus: string) {
 
 describe('handleNewMember', () => {
   beforeEach(() => {
+    chatId = nextChatId--;
     vi.useFakeTimers();
     initPendingStore(openDb(':memory:'));
     // 避免 CAS 檢查打到真實網路（Task 7 之前 handler 尚未接 CAS，先備妥 stub 也無害）
@@ -136,5 +138,27 @@ describe('handleNewMember', () => {
     await handleNewMember(second);
     expect(second.api.banChatMember).toHaveBeenCalled();
     expect(second.api.sendMessage).not.toHaveBeenCalled(); // 通知只發一次
+  });
+
+  it('CAS 命中時清除既有 pending，殘留 timer 不會解封永久封鎖', async () => {
+    // 第一次入群：正常出題，建立 pending 與 180 秒 timer
+    const ctx1 = makeCtx('left', 'member');
+    await handleNewMember(ctx1);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    // 退群後重進，此時 CAS 命中 → 永久封鎖
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    }));
+    const ctx2 = makeCtx('left', 'member');
+    await handleNewMember(ctx2);
+    expect(ctx2.api.banChatMember).toHaveBeenCalled();
+
+    // 舊 timer 到期也不得執行 ban+unban（解封）
+    await vi.advanceTimersByTimeAsync(200_000);
+    expect(ctx1.api.unbanChatMember).not.toHaveBeenCalled();
+    expect(ctx2.api.unbanChatMember).not.toHaveBeenCalled();
   });
 });

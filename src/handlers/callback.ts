@@ -1,5 +1,5 @@
 import { Context } from 'grammy';
-import { getPending, resolvePending, PendingUser } from '../store/pending.js';
+import { getPending, resolvePending } from '../store/pending.js';
 import { config } from '../config.js';
 import { kickAndCleanup, deletePendingMessages } from './pendingActions.js';
 

@@ -1,9 +1,9 @@
 import { Context } from 'grammy';
-import { addPending, PendingUser } from '../store/pending.js';
+import { addPending, getPending, resolvePending, PendingUser } from '../store/pending.js';
 import { generateCaptcha } from '../services/captcha.js';
 import { InlineKeyboard } from 'grammy';
 import { config } from '../config.js';
-import { kickAndCleanup } from './pendingActions.js';
+import { kickAndCleanup, deletePendingMessages } from './pendingActions.js';
 import { isCasBanned } from '../services/cas.js';
 import { recordJoin } from '../services/joinFlood.js';
 import { markRemoved } from '../store/recentlyRemoved.js';
@@ -28,6 +28,11 @@ export async function handleNewMember(ctx: Context) {
   // 1. 入群洪水檢查：戒備模式中直接踢出（可重新加入）
   const flood = recordJoin(chatId);
   if (flood.inAlert) {
+    const stale = getPending(chatId, userId);
+    if (stale) {
+      resolvePending(chatId, userId);
+      await deletePendingMessages(ctx.api, stale);
+    }
     markRemoved(chatId, userId);
     await ctx.api.banChatMember(chatId, userId);
     await ctx.api.unbanChatMember(chatId, userId); // 允許稍後重新加入
@@ -47,6 +52,11 @@ export async function handleNewMember(ctx: Context) {
 
   // 2. CAS 檢查：已知 spammer 直接永久封鎖
   if (await isCasBanned(userId)) {
+    const stale = getPending(chatId, userId);
+    if (stale) {
+      resolvePending(chatId, userId);
+      await deletePendingMessages(ctx.api, stale);
+    }
     markRemoved(chatId, userId);
     await ctx.api.banChatMember(chatId, userId);
     console.log(`[CAS] 用戶 ${userId} 在 CAS 名單上，已永久封鎖（群組 ${chatId}）`);
