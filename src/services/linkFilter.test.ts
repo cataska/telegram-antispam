@@ -24,3 +24,25 @@ describe('containsLink', () => {
     expect(containsLink(text)).toBe(true);
   });
 });
+
+describe('containsLink：entity', () => {
+  it('偵測藏在顯示文字底下的超連結（text_link）', () => {
+    expect(
+      containsLink('點我看好康', [
+        { type: 'text_link', offset: 0, length: 5, url: 'https://spam.example.com' },
+      ])
+    ).toBe(true);
+  });
+
+  it('偵測 Telegram 標記為 url 的 entity', () => {
+    expect(containsLink('example.com/abc', [{ type: 'url', offset: 0, length: 15 }])).toBe(true);
+  });
+
+  it('@提及不算連結：群內 @人是正常行為', () => {
+    expect(containsLink('@someone 早安', [{ type: 'mention', offset: 0, length: 8 }])).toBe(false);
+  });
+
+  it('一般格式 entity 不誤判', () => {
+    expect(containsLink('大家好', [{ type: 'bold', offset: 0, length: 3 }])).toBe(false);
+  });
+});

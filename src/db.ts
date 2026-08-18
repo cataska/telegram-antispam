@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 export type DB = Database.Database;
 
 /**
- * 開啟資料庫連線並初始化 pending 表
+ * 開啟資料庫連線並初始化 pending、members 表
  * @param path - 資料庫文件路徑，特殊值 ':memory:' 表示使用記憶體資料庫
  * @returns 初始化後的資料庫實例
  */
@@ -30,6 +30,16 @@ export function openDb(path: string): DB {
       joined_at          INTEGER NOT NULL,
       captcha_message_id INTEGER NOT NULL,
       join_message_id    INTEGER,
+      PRIMARY KEY (chat_id, user_id)
+    )
+  `);
+
+  // 記錄成員的加入時間，供「新成員限制」（例如入群一段時間內禁發連結）判斷
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS members (
+      chat_id   INTEGER NOT NULL,
+      user_id   INTEGER NOT NULL,
+      joined_at INTEGER NOT NULL,
       PRIMARY KEY (chat_id, user_id)
     )
   `);

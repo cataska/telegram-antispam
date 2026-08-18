@@ -9,6 +9,7 @@ export interface Config {
   casEnabled: boolean;
   casTimeoutMs: number;
   adminMuteSeconds: number;
+  linkRestrictWindowMs: number;
   dbPath: string;
 }
 
@@ -20,6 +21,17 @@ function positiveInt(env: Env, name: string, defaultValue: number): number {
   const value = Number(raw);
   if (!Number.isInteger(value) || value <= 0) {
     throw new Error(`環境變數 ${name} 必須是正整數，收到：${raw}`);
+  }
+  return value;
+}
+
+// 與 positiveInt 的差別：允許 0，用來表示「停用該功能」
+function nonNegativeInt(env: Env, name: string, defaultValue: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return defaultValue;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`環境變數 ${name} 必須是非負整數，收到：${raw}`);
   }
   return value;
 }
@@ -44,6 +56,8 @@ export function loadConfig(env: Env = process.env): Config {
     casEnabled: booleanFlag(env, 'CAS_ENABLED', true),
     casTimeoutMs: positiveInt(env, 'CAS_TIMEOUT_MS', 3000),
     adminMuteSeconds: positiveInt(env, 'ADMIN_MUTE_SECONDS', 86_400),
+    // 0 表示停用「新成員禁連結」
+    linkRestrictWindowMs: nonNegativeInt(env, 'LINK_RESTRICT_HOURS', 24) * 3_600_000,
     dbPath: env.DB_PATH || './data/antispam.db',
   };
 }

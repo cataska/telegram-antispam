@@ -1,8 +1,14 @@
 import { Context, NextFunction } from 'grammy';
-import { getPending } from '../store/pending.js';
+import { isRecentMember } from '../store/members.js';
 import { checkRateLimit } from '../services/rateLimit.js';
 import { containsLink } from '../services/linkFilter.js';
 import { config } from '../config.js';
+
+// 管理員豁免所有限制。只在即將處置時才查，避免每則訊息都打一次 API。
+async function isAdmin(ctx: Context, chatId: number, userId: number): Promise<boolean> {
+  const member = await ctx.api.getChatMember(chatId, userId);
+  return member.status === 'administrator' || member.status === 'creator';
+}
 
 export async function handleMessage(ctx: Context, next: NextFunction) {
   const chat = ctx.chat;
@@ -15,19 +21,25 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
 
   const chatId = chat.id;
   const text = ctx.message?.text || ctx.message?.caption || '';
+  const entities = ctx.message?.entities ?? ctx.message?.caption_entities ?? [];
 
-  // 1. 驗證中的新成員禁止發連結
-  if (getPending(chatId, userId) && containsLink(text)) {
+  // 1. 新成員在加入後的限制期內禁止發連結。
+  //    綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
+  //    真正的破口是「通過驗證後先潛伏、隔一段時間再發廣告」。
+  if (
+    isRecentMember(chatId, userId, config.linkRestrictWindowMs) &&
+    containsLink(text, entities) &&
+    !(await isAdmin(ctx, chatId, userId))
+  ) {
     await ctx.deleteMessage();
-    console.log(`[連結過濾] 刪除驗證中用戶 ${userId} 的訊息（含連結）`);
+    console.log(`[連結過濾] 刪除新成員 ${userId} 的訊息（含連結）`);
     return;
   }
 
   // 2. 洪水偵測（管理員豁免）
   const isFlooding = checkRateLimit(chatId, userId, ctx.message?.media_group_id);
   if (isFlooding) {
-    const member = await ctx.api.getChatMember(chatId, userId);
-    if (member.status === 'administrator' || member.status === 'creator') {
+    if (await isAdmin(ctx, chatId, userId)) {
       return next();
     }
 

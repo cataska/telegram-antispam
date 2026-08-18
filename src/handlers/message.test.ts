@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleMessage } from './message.js';
-import { initPendingStore, addPending } from '../store/pending.js';
 import { openDb } from '../db.js';
+import { initStores } from '../store/index.js';
+import { recordMemberJoin } from '../store/members.js';
 
 interface CtxOptions {
   chatId: number;
@@ -10,13 +11,18 @@ interface CtxOptions {
   text?: string;
   mediaGroupId?: string;
   memberStatus?: string;
+  entities?: Array<Record<string, unknown>>;
 }
 
 function makeCtx(opts: CtxOptions) {
   return {
     chat: { id: opts.chatId, type: opts.chatType ?? 'supergroup' },
     from: { id: opts.userId, first_name: 'Test' },
-    message: { text: opts.text ?? '', media_group_id: opts.mediaGroupId },
+    message: {
+      text: opts.text ?? '',
+      media_group_id: opts.mediaGroupId,
+      entities: opts.entities,
+    },
     deleteMessage: vi.fn().mockResolvedValue(true),
     reply: vi.fn().mockResolvedValue({}),
     api: {
@@ -38,7 +44,7 @@ describe('handleMessage', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     chatId = nextChatId++;
-    initPendingStore(openDb(':memory:'));
+    initStores(openDb(':memory:'));
   });
 
   afterEach(() => {
@@ -55,12 +61,8 @@ describe('handleMessage', () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it('驗證中的新成員發連結會被刪除', async () => {
-    addPending(
-      { userId, chatId, correctAnswer: '2', joinedAt: Date.now(), captchaMessageId: 1 },
-      180_000,
-      () => {}
-    );
+  it('限制期內的新成員發連結會被刪除', async () => {
+    recordMemberJoin(chatId, userId);
     const ctx = makeCtx({ chatId, userId, text: '快來 https://spam.com' });
     const next = vi.fn();
 
@@ -70,8 +72,61 @@ describe('handleMessage', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('不在驗證名單的既有成員發連結不受影響', async () => {
+  it('先潛伏、通過驗證後才發廣告仍會被擋（限制期未過）', async () => {
+    // 加入已 12 小時：早就通過驗證、沒有 pending 記錄，但仍在 24 小時限制期內
+    recordMemberJoin(chatId, userId, Date.now() - 12 * 3_600_000);
+    const ctx = makeCtx({ chatId, userId, text: '福利群 t.me/spamgroup' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('藏在顯示文字底下的連結（text_link）也會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '點我看好康',
+      entities: [{ type: 'text_link', offset: 0, length: 5, url: 'https://spam.example.com' }],
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('限制期已過的成員發連結不受影響', async () => {
+    recordMemberJoin(chatId, userId, Date.now() - 25 * 3_600_000);
     const ctx = makeCtx({ chatId, userId, text: '分享 https://example.com' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('bot 進群前就在的老成員（無加入記錄）發連結不受影響', async () => {
+    const ctx = makeCtx({ chatId, userId, text: '分享 https://example.com' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('管理員在限制期內發連結不會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      memberStatus: 'administrator',
+      text: '公告 https://example.com',
+    });
     const next = vi.fn();
 
     await handleMessage(ctx, next);

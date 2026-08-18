@@ -11,6 +11,15 @@ describe('openDb', () => {
     db.close();
   });
 
+  it('建立 members 表', () => {
+    const db = openDb(':memory:');
+    const row = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'members'`)
+      .get();
+    expect(row).toBeDefined();
+    db.close();
+  });
+
   it('pending 表可寫入與讀回', () => {
     const db = openDb(':memory:');
     db.prepare(

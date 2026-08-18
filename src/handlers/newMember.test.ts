@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleNewMember } from './newMember.js';
-import { initPendingStore, getPending } from '../store/pending.js';
+import { getPending } from '../store/pending.js';
 import { openDb } from '../db.js';
+import { initStores } from '../store/index.js';
 import { recordJoin } from '../services/joinFlood.js';
 
 let nextChatId = -100123;
@@ -30,7 +31,7 @@ describe('handleNewMember', () => {
   beforeEach(() => {
     chatId = nextChatId--;
     vi.useFakeTimers();
-    initPendingStore(openDb(':memory:'));
+    initStores(openDb(':memory:'));
     // 避免 CAS 檢查打到真實網路（Task 7 之前 handler 尚未接 CAS，先備妥 stub 也無害）
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,

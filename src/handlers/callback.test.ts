@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleCallback } from './callback.js';
-import { initPendingStore, addPending, getPending, attachJoinMessage } from '../store/pending.js';
+import { addPending, getPending, attachJoinMessage } from '../store/pending.js';
 import { openDb } from '../db.js';
+import { initStores } from '../store/index.js';
 
 const chatId = -100456;
 const userId = 42;
@@ -45,7 +46,7 @@ const liftUntil = () => Math.floor(Date.now() / 1000) + 35;
 describe('handleCallback', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    initPendingStore(openDb(':memory:'));
+    initStores(openDb(':memory:'));
     setPending();
   });
 

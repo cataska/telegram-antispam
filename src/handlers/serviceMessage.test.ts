@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleServiceMessage } from './serviceMessage.js';
-import { initPendingStore, addPending, getPending } from '../store/pending.js';
+import { addPending, getPending } from '../store/pending.js';
 import { markRemoved } from '../store/recentlyRemoved.js';
 import { openDb } from '../db.js';
+import { initStores } from '../store/index.js';
 
 let nextChatId = 5000;
 
@@ -19,7 +20,7 @@ describe('handleServiceMessage', () => {
 
   beforeEach(() => {
     chatId = nextChatId++;
-    initPendingStore(openDb(':memory:'));
+    initStores(openDb(':memory:'));
   });
 
   it('驗證中用戶的入群訊息被記錄到 pending', async () => {

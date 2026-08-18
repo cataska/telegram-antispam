@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Bot } from 'grammy';
 import { setupHandlers } from './handlers/index.js';
-import { initPendingStore, getPending } from './store/pending.js';
+import { getPending } from './store/pending.js';
 import { openDb } from './db.js';
+import { initStores } from './store/index.js';
 
 // 整合測試：用真實 Bot 實例走 bot.handleUpdate()，驗證事件路由接線
 // （filter 匹配、註冊順序），API 呼叫由 transformer 攔截不出網路。
@@ -134,7 +135,7 @@ describe('整合：事件路由接線', () => {
   beforeEach(() => {
     chatId = nextChatId--;
     vi.useFakeTimers();
-    initPendingStore(openDb(':memory:'));
+    initStores(openDb(':memory:'));
     // CAS 一律未命中，避免真實網路
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,

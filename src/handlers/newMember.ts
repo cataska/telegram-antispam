@@ -8,6 +8,7 @@ import { isCasBanned } from '../services/cas.js';
 import { recordJoin } from '../services/joinFlood.js';
 import { markRemoved } from '../store/recentlyRemoved.js';
 import { muteForVerification, liftRestrictions } from './restrictions.js';
+import { recordMemberJoin, pruneMembers } from '../store/members.js';
 
 export async function handleNewMember(ctx: Context) {
   const update = ctx.chatMember;
@@ -63,6 +64,11 @@ export async function handleNewMember(ctx: Context) {
     console.log(`[CAS] 用戶 ${userId} 在 CAS 名單上，已永久封鎖（群組 ${chatId}）`);
     return;
   }
+
+  // 記錄加入時間，供限制期內的新成員規則（禁連結）判斷。
+  // 在靜音之前記錄：即使後續驗證流程建立失敗，這個人仍然在群裡，仍該受限。
+  recordMemberJoin(chatId, userId);
+  pruneMembers(config.linkRestrictWindowMs);
 
   // 限制新成員發言
   await muteForVerification(ctx.api, chatId, userId);

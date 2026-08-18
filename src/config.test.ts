@@ -14,7 +14,18 @@ describe('loadConfig', () => {
     expect(config.casEnabled).toBe(true);
     expect(config.casTimeoutMs).toBe(3000);
     expect(config.adminMuteSeconds).toBe(86_400);
+    expect(config.linkRestrictWindowMs).toBe(86_400_000);
     expect(config.dbPath).toBe('./data/antispam.db');
+  });
+
+  it('LINK_RESTRICT_HOURS 可設為 0 表示停用新成員禁連結', () => {
+    expect(loadConfig({ LINK_RESTRICT_HOURS: '0' }).linkRestrictWindowMs).toBe(0);
+    expect(loadConfig({ LINK_RESTRICT_HOURS: '48' }).linkRestrictWindowMs).toBe(172_800_000);
+  });
+
+  it('LINK_RESTRICT_HOURS 為負數或非整數時拋錯', () => {
+    expect(() => loadConfig({ LINK_RESTRICT_HOURS: '-1' })).toThrow('LINK_RESTRICT_HOURS');
+    expect(() => loadConfig({ LINK_RESTRICT_HOURS: 'abc' })).toThrow('LINK_RESTRICT_HOURS');
   });
 
   it('環境變數可覆寫預設值', () => {
