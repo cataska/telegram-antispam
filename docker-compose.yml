@@ -1,0 +1,18 @@
+services:
+  antispam:
+    build: .
+    restart: always
+    # 由 tini 當 PID 1：確保 SIGTERM 正確轉發，容器能乾淨收工
+    init: true
+    env_file: .env
+    environment:
+      DB_PATH: /app/data/antispam.db
+    volumes:
+      # 容器內以 node（uid 1000）執行，host 端的 ./data 必須先建好並
+      # chown 給 uid 1000，否則 Docker 會以 root 建立目錄導致無法寫入
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

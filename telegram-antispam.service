@@ -1,0 +1,34 @@
+[Unit]
+Description=Telegram Anti-Spam Bot (ClojureTW)
+After=network-online.target
+Wants=network-online.target
+
+# 崩潰迴圈時不要無限重啟燒 CPU：5 分鐘內超過 5 次就停下來。
+# 這兩個鍵屬於 [Unit]，放在 [Service] 會被 systemd 忽略。
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=antispam
+WorkingDirectory=/opt/telegram-antispam
+EnvironmentFile=/etc/telegram-antispam.env
+ExecStart=/usr/bin/node dist/index.js
+
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=antispam
+
+# 基本加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/telegram-antispam/data
+
+[Install]
+WantedBy=multi-user.target
