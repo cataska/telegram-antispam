@@ -18,6 +18,13 @@ const keyOf = (chatId: number, userId: number) => `${chatId}:${userId}`;
 
 export function initPendingStore(database: DB) {
   db = database;
+  stopAllTimers();
+}
+
+// 停掉所有等待中的超時 timer。關閉時必須呼叫：
+// 這些 timer 最長 3 分鐘，會讓 Node 遲遲不肯結束，
+// 容器停止時就得空等到 SIGKILL。
+export function stopAllTimers() {
   for (const timer of timers.values()) clearTimeout(timer);
   timers.clear();
 }
@@ -103,8 +110,7 @@ export interface RestoreResult {
 
 // 啟動時恢復：未過期者按剩餘時間重建 timer；已過期者以 delay 0 走同一條超時路徑
 export function restorePending(timeoutMs: number, onTimeout: TimeoutHandler): RestoreResult {
-  for (const timer of timers.values()) clearTimeout(timer);
-  timers.clear();
+  stopAllTimers();
 
   const rows = db.prepare(`SELECT chat_id, user_id FROM pending`).all() as Array<{
     chat_id: number;
