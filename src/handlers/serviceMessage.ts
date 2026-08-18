@@ -11,18 +11,26 @@ export async function handleServiceMessage(ctx: Context) {
   const members = message?.new_chat_members;
   if (!chatId || !message || !members) return;
 
-  for (const member of members) {
-    if (member.is_bot) continue;
+  const humans = members.filter((member) => !member.is_bot);
 
-    if (consumeRecentlyRemoved(chatId, member.id)) {
-      try {
-        await ctx.api.deleteMessage(chatId, message.message_id);
-      } catch {
-        // 訊息可能已不存在，忽略
-      }
-      return; // 整則訊息已刪，不需再處理其他成員
+  // 一則訊息可含多位成員。必須先對每一位都消費掉「剛被移除」標記再決定刪不刪：
+  // 命中就提早 return 的話，後面成員的標記會留到 TTL 過期，
+  // 期間他若重新加入，正常的入群訊息會被誤刪。
+  let removedAny = false;
+  for (const member of humans) {
+    if (consumeRecentlyRemoved(chatId, member.id)) removedAny = true;
+  }
+
+  if (removedAny) {
+    try {
+      await ctx.api.deleteMessage(chatId, message.message_id);
+    } catch {
+      // 訊息可能已不存在，忽略
     }
+    return; // 整則訊息已刪，其他成員的入群訊息也隨之消失
+  }
 
+  for (const member of humans) {
     attachJoinMessage(chatId, member.id, message.message_id);
   }
 }

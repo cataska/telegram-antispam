@@ -22,11 +22,11 @@ bot.catch((err) => {
 });
 
 // 恢復重啟前進行中的驗證：未過期者按剩餘時間重建超時 timer，已過期者立即踢出
-const restored = restorePending(config.verifyTimeoutMs, async (pending) => {
+const { restored, expired } = restorePending(config.verifyTimeoutMs, async (pending) => {
   console.log(`[超時] 用戶 ${pending.userId} 驗證超時，已踢出群組 ${pending.chatId}`);
   await kickAndCleanup(bot.api, pending);
 });
-console.log(`[啟動] 恢復 ${restored} 筆進行中的驗證`);
+console.log(`[啟動] 恢復 ${restored} 筆進行中的驗證，另有 ${expired} 筆已逾時將立即處置`);
 
 // chat_member 不在 getUpdates 的預設回傳範圍，必須明確列出才收得到新成員事件
 bot.start({

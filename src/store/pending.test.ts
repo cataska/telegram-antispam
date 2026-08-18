@@ -85,8 +85,9 @@ describe('pending store', () => {
     const onTimeout = vi.fn();
     addPending(makePending({ joinedAt: Date.now() - 100_000 }), 180_000, () => {});
     // restorePending 會先清空 timer 註冊表再重建，等同重啟後的狀態
-    const count = restorePending(180_000, onTimeout);
-    expect(count).toBe(1);
+    const { restored, expired } = restorePending(180_000, onTimeout);
+    expect(restored).toBe(1);
+    expect(expired).toBe(0);
 
     await vi.advanceTimersByTimeAsync(75_000);
     expect(onTimeout).not.toHaveBeenCalled();

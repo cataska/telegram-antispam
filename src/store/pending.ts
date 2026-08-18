@@ -96,8 +96,13 @@ export function resolvePending(chatId: number, userId: number) {
   db.prepare(`DELETE FROM pending WHERE chat_id = ? AND user_id = ?`).run(chatId, userId);
 }
 
+export interface RestoreResult {
+  restored: number; // 仍在驗證時限內，已重建 timer
+  expired: number;  // 時限已過，將立即走超時處置
+}
+
 // 啟動時恢復：未過期者按剩餘時間重建 timer；已過期者以 delay 0 走同一條超時路徑
-export function restorePending(timeoutMs: number, onTimeout: TimeoutHandler): number {
+export function restorePending(timeoutMs: number, onTimeout: TimeoutHandler): RestoreResult {
   for (const timer of timers.values()) clearTimeout(timer);
   timers.clear();
 
@@ -107,11 +112,13 @@ export function restorePending(timeoutMs: number, onTimeout: TimeoutHandler): nu
   }>;
   const now = Date.now();
   let restored = 0;
+  let expired = 0;
   for (const row of rows) {
     const pending = getPending(row.chat_id, row.user_id)!;
     const remaining = pending.joinedAt + timeoutMs - now;
     scheduleTimeout(pending, Math.max(0, remaining), onTimeout);
     if (remaining > 0) restored++;
+    else expired++;
   }
-  return restored;
+  return { restored, expired };
 }

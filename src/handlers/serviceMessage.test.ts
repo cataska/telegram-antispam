@@ -73,4 +73,31 @@ describe('handleServiceMessage', () => {
     // 刪除後即停止：43 的 pending 不會被補記 join_message_id
     expect(getPending(chatId, 43)?.joinMessageId).toBeUndefined();
   });
+
+  it('多成員訊息：排在後面的「剛被移除」標記也會被消費掉', async () => {
+    markRemoved(chatId, 42);
+    markRemoved(chatId, 43);
+    const first = makeCtx(chatId, [
+      { id: 42, is_bot: false },
+      { id: 43, is_bot: false },
+    ]);
+
+    await handleServiceMessage(first);
+    expect(first.api.deleteMessage).toHaveBeenCalledWith(chatId, 777);
+
+    // 43 在 TTL 內重新加入並正常進入驗證：標記若沒被消費掉，
+    // 這則正常的入群訊息會被誤刪
+    addPending(
+      { userId: 43, chatId, correctAnswer: '2', joinedAt: Date.now(), captchaMessageId: 98 },
+      180_000,
+      () => {}
+    );
+    const second = makeCtx(chatId, [{ id: 43, is_bot: false }]);
+    second.message.message_id = 888;
+
+    await handleServiceMessage(second);
+
+    expect(second.api.deleteMessage).not.toHaveBeenCalled();
+    expect(getPending(chatId, 43)?.joinMessageId).toBe(888);
+  });
 });
