@@ -1,0 +1,9 @@
+# 專案在 Windows 檔案系統上開發（/mnt/c），但部署目標是 Linux 容器。
+# 一律以 LF 儲存並簽出，避免 Dockerfile、systemd unit、shell script
+# 混入 CRLF 導致在 Linux 上執行失敗。
+* text=auto eol=lf
+
+# 二進位檔不做轉換
+*.png binary
+*.jpg binary
+*.db binary
