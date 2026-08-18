@@ -12,14 +12,25 @@
 
 之後更新只要 `git pull` + 重建容器，多位維護者也好協作。私有或公開都可以——`.env` 已在 `.gitignore` 內，token 不會進 repo。
 
+程式碼在 **https://github.com/cataska/telegram-antispam**（私有）。
+
+私有 repo 需要認證才拉得動，在 VPS 上放一把唯讀的 deploy key：
+
 ```bash
-# 本機：先把改動提交，再推上去
-git add -A && git commit -m "..."
-git remote add origin git@github.com:<org>/<repo>.git
-git push -u origin main
+# VPS 上產生金鑰（不設密碼，否則開機自動啟動時會卡住）
+ssh-keygen -t ed25519 -C "vps-deploy" -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
 ```
 
-VPS 若要拉私有 repo，得在機器上放一把唯讀的 deploy key。
+把輸出的公鑰貼到 GitHub → repo → Settings → Deploy keys → Add deploy key，
+**不要**勾選 Allow write access（部署只需要讀取）。
+
+接著測試連線並改用 SSH URL：
+
+```bash
+ssh -T git@github.com    # 出現 "successfully authenticated" 即可
+git clone git@github.com:cataska/telegram-antispam.git /opt/telegram-antispam
+```
 
 **選項 B：直接傳檔**
 
@@ -139,11 +150,11 @@ docker compose version    # 要能看到 v2.x 以上
 ```bash
 sudo mkdir -p /opt/telegram-antispam
 sudo chown $USER:$USER /opt/telegram-antispam
-git clone <your-repo> /opt/telegram-antispam
+git clone git@github.com:cataska/telegram-antispam.git /opt/telegram-antispam
 cd /opt/telegram-antispam
 ```
 
-（用選項 B 的話，這步改成從本機 rsync 上來。）
+需要先設定好 deploy key（見文件開頭）。用選項 B 的話，這步改成從本機 rsync 上來。
 
 ---
 
