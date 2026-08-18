@@ -38,6 +38,10 @@ function setPending() {
   );
 }
 
+// 解除限制帶 35 秒後到期的 until_date：到期後 Telegram 才會把使用者恢復成一般
+// member，只把權限設回預設值會讓人永遠停在 restricted。
+const liftUntil = () => Math.floor(Date.now() / 1000) + 35;
+
 describe('handleCallback', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -49,12 +53,14 @@ describe('handleCallback', () => {
     vi.useRealTimers();
   });
 
-  it('答對後以群組預設權限恢復發言', async () => {
+  it('答對後以群組預設權限恢復發言，且限制會到期回歸 member', async () => {
     const ctx = makeCtx(`verify:${userId}:2`, userId);
 
     await handleCallback(ctx);
 
-    expect(ctx.api.restrictChatMember).toHaveBeenCalledWith(chatId, userId, chatPermissions);
+    expect(ctx.api.restrictChatMember).toHaveBeenCalledWith(chatId, userId, chatPermissions, {
+      until_date: liftUntil(),
+    });
     expect(getPending(chatId, userId)).toBeUndefined();
   });
 
@@ -93,8 +99,18 @@ describe('handleCallback', () => {
 
     await handleCallback(ctx);
 
-    expect(ctx.api.restrictChatMember).toHaveBeenCalledWith(chatId, userId, chatPermissions);
+    expect(ctx.api.restrictChatMember).toHaveBeenCalledWith(chatId, userId, chatPermissions, {
+      until_date: liftUntil(),
+    });
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('不認得的 callback data 仍會回應，避免按鈕一直轉圈', async () => {
+    const ctx = makeCtx('somethingelse:1', userId);
+
+    await handleCallback(ctx);
+
+    expect(ctx.answerCallbackQuery).toHaveBeenCalled();
   });
 
   it('管理員封鎖時入群訊息一併刪除', async () => {

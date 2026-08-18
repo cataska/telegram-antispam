@@ -2,6 +2,7 @@ import { Context } from 'grammy';
 import { getPending, resolvePending } from '../store/pending.js';
 import { config } from '../config.js';
 import { kickAndCleanup, deletePendingMessages } from './pendingActions.js';
+import { liftRestrictions } from './restrictions.js';
 
 export async function handleCallback(ctx: Context) {
   const data = ctx.callbackQuery?.data;
@@ -23,17 +24,9 @@ export async function handleCallback(ctx: Context) {
     await handleVerifyAction(ctx, data, chatId, callerId);
     return;
   }
-}
 
-// 以群組預設權限恢復發言，避免給新成員比群組設定更寬的權限
-async function liftRestrictions(ctx: Context, chatId: number, userId: number) {
-  const chat = await ctx.api.getChat(chatId);
-  const permissions = chat.permissions ?? {
-    can_send_messages: true,
-    can_send_other_messages: true,
-    can_add_web_page_previews: true,
-  };
-  await ctx.api.restrictChatMember(chatId, userId, permissions);
+  // 不認得的 callback data 也要回應，否則使用者端的按鈕會一直轉圈到逾時
+  await ctx.answerCallbackQuery();
 }
 
 async function handleAdminAction(
@@ -59,7 +52,7 @@ async function handleAdminAction(
   switch (action) {
     case 'pass':
       // 直接通過驗證：保留入群訊息，只刪驗證訊息
-      await liftRestrictions(ctx, chatId, userId);
+      await liftRestrictions(ctx.api, chatId, userId);
       await ctx.answerCallbackQuery({ text: '已通過驗證' });
       if (pending) {
         try {
@@ -126,7 +119,7 @@ async function handleVerifyAction(
 
   if (answer === pending.correctAnswer) {
     // 驗證成功：保留入群訊息，只刪驗證訊息
-    await liftRestrictions(ctx, chatId, callerId);
+    await liftRestrictions(ctx.api, chatId, callerId);
     await ctx.answerCallbackQuery({ text: '驗證成功！' });
     try {
       await ctx.api.deleteMessage(chatId, pending.captchaMessageId);

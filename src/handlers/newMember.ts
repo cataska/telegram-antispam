@@ -7,6 +7,7 @@ import { kickAndCleanup, deletePendingMessages } from './pendingActions.js';
 import { isCasBanned } from '../services/cas.js';
 import { recordJoin } from '../services/joinFlood.js';
 import { markRemoved } from '../store/recentlyRemoved.js';
+import { muteForVerification, liftRestrictions } from './restrictions.js';
 
 export async function handleNewMember(ctx: Context) {
   const update = ctx.chatMember;
@@ -64,48 +65,55 @@ export async function handleNewMember(ctx: Context) {
   }
 
   // 限制新成員發言
-  await ctx.api.restrictChatMember(chatId, userId, {
-    can_send_messages: false,
-    can_send_other_messages: false,
-    can_add_web_page_previews: false,
-  });
+  await muteForVerification(ctx.api, chatId, userId);
 
-  // 產生驗證題目
-  const captcha = generateCaptcha();
+  // 靜音之後的任一步失敗（發驗證訊息被限流、群組被禁言、寫入 DB 失敗）都必須解除限制：
+  // 否則這個人被靜音，卻沒有 pending 記錄、沒有超時 timer、沒有驗證訊息可按，
+  // 不會有任何機制把他解開。
+  try {
+    // 產生驗證題目
+    const captcha = generateCaptcha();
 
-  // 建立按鈕（選項垂直排列）
-  const keyboard = new InlineKeyboard();
-  captcha.options.forEach((option) => {
-    keyboard.text(option, `verify:${userId}:${option}`).row();
-  });
+    // 建立按鈕（選項垂直排列）
+    const keyboard = new InlineKeyboard();
+    captcha.options.forEach((option) => {
+      keyboard.text(option, `verify:${userId}:${option}`).row();
+    });
 
-  // 管理員快捷按鈕（水平排列）
-  keyboard
-    .text('通過[✅]', `admin:${userId}:pass`)
-    .text('封鎖[🚫]', `admin:${userId}:ban`)
-    .text('禁言[🔇]', `admin:${userId}:mute`);
+    // 管理員快捷按鈕（水平排列）
+    keyboard
+      .text('通過[✅]', `admin:${userId}:pass`)
+      .text('封鎖[🚫]', `admin:${userId}:ban`)
+      .text('禁言[🔇]', `admin:${userId}:mute`);
 
-  const timeoutSeconds = config.verifyTimeoutMs / 1000;
+    const timeoutSeconds = config.verifyTimeoutMs / 1000;
 
-  // 發送驗證訊息
-  const message = await ctx.api.sendMessage(
-    chatId,
-    `🤖 入群驗證\n${user.first_name}，請在 ${timeoutSeconds} 秒內回答問題\nPlease answer within ${timeoutSeconds} seconds\n\n${captcha.question}`,
-    { reply_markup: keyboard }
-  );
+    // 發送驗證訊息
+    const message = await ctx.api.sendMessage(
+      chatId,
+      `🤖 入群驗證\n${user.first_name}，請在 ${timeoutSeconds} 秒內回答問題\nPlease answer within ${timeoutSeconds} seconds\n\n${captcha.question}`,
+      { reply_markup: keyboard }
+    );
 
-  const pending: PendingUser = {
-    userId,
-    chatId,
-    correctAnswer: captcha.correctAnswer,
-    joinedAt: Date.now(),
-    captchaMessageId: message.message_id,
-  };
+    const pending: PendingUser = {
+      userId,
+      chatId,
+      correctAnswer: captcha.correctAnswer,
+      joinedAt: Date.now(),
+      captchaMessageId: message.message_id,
+    };
 
-  console.log(`[新成員] ${user.first_name} (${userId}) 加入群組 ${chatId}，等待驗證`);
+    console.log(`[新成員] ${user.first_name} (${userId}) 加入群組 ${chatId}，等待驗證`);
 
-  addPending(pending, config.verifyTimeoutMs, async (p) => {
-    console.log(`[超時] 用戶 ${p.userId} 驗證超時，已踢出群組 ${p.chatId}`);
-    await kickAndCleanup(ctx.api, p);
-  });
+    addPending(pending, config.verifyTimeoutMs, async (p) => {
+      console.log(`[超時] 用戶 ${p.userId} 驗證超時，已踢出群組 ${p.chatId}`);
+      await kickAndCleanup(ctx.api, p);
+    });
+  } catch (e) {
+    console.log(`[新成員] 用戶 ${userId} 驗證流程建立失敗，已解除限制：${e}`);
+    await liftRestrictions(ctx.api, chatId, userId).catch((liftError) => {
+      console.error(`[新成員] 用戶 ${userId} 解除限制失敗，需人工處理：${liftError}`);
+    });
+    throw e;
+  }
 }

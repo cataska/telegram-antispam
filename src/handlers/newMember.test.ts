@@ -17,6 +17,7 @@ function makeCtx(oldStatus: string, newStatus: string) {
     },
     api: {
       restrictChatMember: vi.fn().mockResolvedValue(true),
+      getChat: vi.fn().mockResolvedValue({ id: chatId, permissions: { can_send_messages: true } }),
       sendMessage: vi.fn().mockResolvedValue({ message_id: 99 }),
       banChatMember: vi.fn().mockResolvedValue(true),
       unbanChatMember: vi.fn().mockResolvedValue(true),
@@ -50,6 +51,25 @@ describe('handleNewMember', () => {
     expect(ctx.api.restrictChatMember).toHaveBeenCalled();
     expect(ctx.api.sendMessage).toHaveBeenCalled();
     expect(getPending(chatId, user.id)).toBeDefined();
+  });
+
+  it('驗證訊息發不出去時解除限制，避免新成員被永久靜音', async () => {
+    const ctx = makeCtx('left', 'member');
+    ctx.api.sendMessage.mockRejectedValue(new Error('Too Many Requests'));
+
+    await expect(handleNewMember(ctx)).rejects.toThrow('Too Many Requests');
+
+    // 第一次是靜音，第二次是回滾解除；解除帶 until_date 才會回歸 member
+    expect(ctx.api.restrictChatMember).toHaveBeenCalledTimes(2);
+    expect(ctx.api.restrictChatMember).toHaveBeenLastCalledWith(
+      chatId,
+      user.id,
+      { can_send_messages: true },
+      { until_date: Math.floor(Date.now() / 1000) + 35 }
+    );
+    // 沒有殘留的 pending 或 timer
+    expect(getPending(chatId, user.id)).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('管理員被降級（administrator → member）不觸發驗證', async () => {
