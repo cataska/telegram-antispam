@@ -6,41 +6,19 @@
 
 ## 開始前：程式碼怎麼上機器
 
-這個 repo 目前**沒有設定遠端**，所以要先決定傳輸方式。
+程式碼在 **https://github.com/cataska/telegram-antispam**（公開），直接 clone 即可，
+不需要 deploy key 或 token。之後更新只要 `git pull` 加上重建容器。
 
-**選項 A：推到 Git 服務（建議）**
+`.env` 在 `.gitignore` 內，token 不會進 repo——每台機器的 `.env` 都是各自建立的。
 
-之後更新只要 `git pull` + 重建容器，多位維護者也好協作。私有或公開都可以——`.env` 已在 `.gitignore` 內，token 不會進 repo。
-
-程式碼在 **https://github.com/cataska/telegram-antispam**（私有）。
-
-私有 repo 需要認證才拉得動，在 VPS 上放一把唯讀的 deploy key：
+若本機有還沒推上去的改動要先測，也可以直接傳檔：
 
 ```bash
-# VPS 上產生金鑰（不設密碼，否則開機自動啟動時會卡住）
-ssh-keygen -t ed25519 -C "vps-deploy" -f ~/.ssh/id_ed25519 -N ""
-cat ~/.ssh/id_ed25519.pub
-```
-
-把輸出的公鑰貼到 GitHub → repo → Settings → Deploy keys → Add deploy key，
-**不要**勾選 Allow write access（部署只需要讀取）。
-
-接著測試連線並改用 SSH URL：
-
-```bash
-ssh -T git@github.com    # 出現 "successfully authenticated" 即可
-git clone git@github.com:cataska/telegram-antispam.git /opt/telegram-antispam
-```
-
-**選項 B：直接傳檔**
-
-不想開 repo 就用 rsync。缺點是每次更新都要重傳，且沒有版本可回溯。
-
-```bash
-# 本機執行；排除不該上傳的東西
 rsync -av --exclude node_modules --exclude dist --exclude data --exclude .env \
   ./ user@<vps-ip>:/opt/telegram-antispam/
 ```
+
+但正式部署還是走 git，才有版本可回溯。
 
 ---
 
@@ -150,11 +128,11 @@ docker compose version    # 要能看到 v2.x 以上
 ```bash
 sudo mkdir -p /opt/telegram-antispam
 sudo chown $USER:$USER /opt/telegram-antispam
-git clone git@github.com:cataska/telegram-antispam.git /opt/telegram-antispam
+git clone https://github.com/cataska/telegram-antispam.git /opt/telegram-antispam
 cd /opt/telegram-antispam
 ```
 
-需要先設定好 deploy key（見文件開頭）。用選項 B 的話，這步改成從本機 rsync 上來。
+repo 是公開的，clone 不需要任何認證。
 
 ---
 
