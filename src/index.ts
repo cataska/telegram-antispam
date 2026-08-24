@@ -67,3 +67,12 @@ async function shutdown(signal: string) {
 }
 process.once('SIGINT', () => void shutdown('SIGINT'));
 process.once('SIGTERM', () => void shutdown('SIGTERM'));
+
+// runner 對 502、逾時等暫時性 getUpdates 錯誤會自行退避重試；只有不可恢復的
+// 情況（401 token 失效、409 另一個實例在 polling、重試超過 15 小時）才會讓
+// task reject。沒接住就是 unhandled rejection，Node 會直接 crash 且不留訊息，
+// 這裡改成記錄原因後乾淨收工，交給 restart: always 重啟。
+runner.task()?.catch((err) => {
+  console.error('[致命] update 收取迴圈已停止:', err);
+  void shutdown('runner failure').finally(() => process.exit(1));
+});
