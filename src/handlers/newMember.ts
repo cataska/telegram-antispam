@@ -94,12 +94,14 @@ export async function handleNewMember(ctx: Context) {
 
     const timeoutSeconds = config.verifyTimeoutMs / 1000;
 
-    // 發送驗證訊息
-    const message = await ctx.api.sendMessage(
-      chatId,
-      `🤖 入群驗證\n${user.first_name}，請在 ${timeoutSeconds} 秒內回答問題\nPlease answer within ${timeoutSeconds} seconds\n\n${captcha.question}`,
-      { reply_markup: keyboard }
-    );
+    // 發送驗證訊息；加入者名字用 spoiler 遮罩，點擊才顯示
+    // entities 的 offset/length 以 UTF-16 code unit 計算，與 JS 字串 length 一致
+    const header = '🤖 入群驗證\n';
+    const text = `${header}${user.first_name}，請在 ${timeoutSeconds} 秒內回答問題\nPlease answer within ${timeoutSeconds} seconds\n\n${captcha.question}`;
+    const message = await ctx.api.sendMessage(chatId, text, {
+      reply_markup: keyboard,
+      entities: [{ type: 'spoiler', offset: header.length, length: user.first_name.length }],
+    });
 
     const pending: PendingUser = {
       userId,

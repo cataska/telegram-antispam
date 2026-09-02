@@ -54,6 +54,17 @@ describe('handleNewMember', () => {
     expect(getPending(chatId, user.id)).toBeDefined();
   });
 
+  it('驗證訊息用 spoiler 遮罩加入者名字，offset 以 UTF-16 code unit 計算', async () => {
+    const ctx = makeCtx('left', 'member');
+
+    await handleNewMember(ctx);
+
+    const [, text, opts] = ctx.api.sendMessage.mock.calls[0];
+    const entity = opts.entities[0];
+    expect(entity.type).toBe('spoiler');
+    expect(text.slice(entity.offset, entity.offset + entity.length)).toBe(user.first_name);
+  });
+
   it('驗證訊息發不出去時解除限制，避免新成員被永久靜音', async () => {
     const ctx = makeCtx('left', 'member');
     ctx.api.sendMessage.mockRejectedValue(new Error('Too Many Requests'));
