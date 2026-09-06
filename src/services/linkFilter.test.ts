@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { containsLink } from './linkFilter.js';
+import { containsLink, containsBotMention } from './linkFilter.js';
 
 describe('containsLink', () => {
   it('偵測 http/https 連結', () => {
@@ -44,5 +44,58 @@ describe('containsLink：entity', () => {
 
   it('一般格式 entity 不誤判', () => {
     expect(containsLink('大家好', [{ type: 'bold', offset: 0, length: 3 }])).toBe(false);
+  });
+});
+
+describe('containsBotMention', () => {
+  it('偵測 @bot 提及（使用者名稱以 bot 結尾）', () => {
+    expect(
+      containsBotMention('@uyqhdlbot @koeufkafbot', [
+        { type: 'mention', offset: 0, length: 10 },
+        { type: 'mention', offset: 11, length: 12 },
+      ])
+    ).toBe(true);
+  });
+
+  it('bot 結尾不分大小寫', () => {
+    expect(
+      containsBotMention('快加 @SpamBOT', [{ type: 'mention', offset: 3, length: 8 }])
+    ).toBe(true);
+  });
+
+  it('@提及一般人不誤判：群內 @人是正常行為', () => {
+    expect(
+      containsBotMention('@someone 早安', [{ type: 'mention', offset: 0, length: 8 }])
+    ).toBe(false);
+  });
+
+  it('偵測 text_mention 指向 bot 帳號', () => {
+    expect(
+      containsBotMention('點這個', [
+        {
+          type: 'text_mention',
+          offset: 0,
+          length: 3,
+          user: { id: 1, is_bot: true, first_name: 'Spam' },
+        },
+      ])
+    ).toBe(true);
+  });
+
+  it('text_mention 指向一般人不誤判', () => {
+    expect(
+      containsBotMention('叫他', [
+        {
+          type: 'text_mention',
+          offset: 0,
+          length: 2,
+          user: { id: 2, is_bot: false, first_name: 'Someone' },
+        },
+      ])
+    ).toBe(false);
+  });
+
+  it('純文字裡出現 bot 字樣不誤判', () => {
+    expect(containsBotMention('這個 bot 很好用')).toBe(false);
   });
 });

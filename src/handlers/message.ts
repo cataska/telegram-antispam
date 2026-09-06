@@ -1,7 +1,7 @@
 import { Context, NextFunction } from 'grammy';
 import { isRecentMember } from '../store/members.js';
 import { checkRateLimit } from '../services/rateLimit.js';
-import { containsLink } from '../services/linkFilter.js';
+import { containsLink, containsBotMention } from '../services/linkFilter.js';
 import { config } from '../config.js';
 
 // 管理員豁免所有限制。只在即將處置時才查，避免每則訊息都打一次 API。
@@ -23,16 +23,16 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
   const text = ctx.message?.text || ctx.message?.caption || '';
   const entities = ctx.message?.entities ?? ctx.message?.caption_entities ?? [];
 
-  // 1. 新成員在加入後的限制期內禁止發連結。
+  // 1. 新成員在加入後的限制期內禁止發連結與 @bot 提及。
   //    綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
   //    真正的破口是「通過驗證後先潛伏、隔一段時間再發廣告」。
   if (
     isRecentMember(chatId, userId, config.linkRestrictWindowMs) &&
-    containsLink(text, entities) &&
+    (containsLink(text, entities) || containsBotMention(text, entities)) &&
     !(await isAdmin(ctx, chatId, userId))
   ) {
     await ctx.deleteMessage();
-    console.log(`[連結過濾] 刪除新成員 ${userId} 的訊息（含連結）`);
+    console.log(`[連結過濾] 刪除新成員 ${userId} 的訊息（含連結或 @bot 提及）`);
     return;
   }
 

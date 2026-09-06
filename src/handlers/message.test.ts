@@ -98,6 +98,58 @@ describe('handleMessage', () => {
     expect(ctx.deleteMessage).toHaveBeenCalled();
   });
 
+  it('限制期內的新成員發 @bot 提及會被刪除（廣告改用 bot 提及繞過連結過濾）', async () => {
+    // 通過驗證後潛伏 5 小時，再發只含 @bot 提及、不含連結的廣告
+    recordMemberJoin(chatId, userId, Date.now() - 5 * 3_600_000);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '@uyqhdlbot @koeufkafbot',
+      entities: [
+        { type: 'mention', offset: 0, length: 10 },
+        { type: 'mention', offset: 11, length: 12 },
+      ],
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('限制期內的新成員 @一般人不會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '@someone 請問這裡可以問問題嗎',
+      entities: [{ type: 'mention', offset: 0, length: 8 }],
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('限制期已過的成員發 @bot 提及不受影響', async () => {
+    recordMemberJoin(chatId, userId, Date.now() - 25 * 3_600_000);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '@somebot 查一下',
+      entities: [{ type: 'mention', offset: 0, length: 8 }],
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
   it('限制期已過的成員發連結不受影響', async () => {
     recordMemberJoin(chatId, userId, Date.now() - 25 * 3_600_000);
     const ctx = makeCtx({ chatId, userId, text: '分享 https://example.com' });

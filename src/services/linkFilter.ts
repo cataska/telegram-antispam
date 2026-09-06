@@ -10,3 +10,18 @@ export function containsLink(text: string, entities: readonly MessageEntity[] = 
   if (entities.some((entity) => LINK_ENTITY_TYPES.has(entity.type))) return true;
   return URL_REGEX.test(text);
 }
+
+// @bot 提及點一下就開啟該 bot 對話，效果等同連結，是廣告繞過連結過濾的載體。
+// 只認 bot（Telegram 規定 bot 帳號名必須以 bot 結尾）：@一般人是群內正常行為。
+export function containsBotMention(
+  text: string,
+  entities: readonly MessageEntity[] = []
+): boolean {
+  return entities.some((entity) => {
+    if (entity.type === 'text_mention') return entity.user.is_bot;
+    if (entity.type !== 'mention') return false;
+    // entity 的 offset/length 以 UTF-16 code unit 計算，與 JS 字串索引一致
+    const username = text.slice(entity.offset, entity.offset + entity.length);
+    return /bot$/i.test(username);
+  });
+}
