@@ -1,4 +1,5 @@
 import { Context, NextFunction } from 'grammy';
+import type { Message } from 'grammy/types';
 import { isRecentMember } from '../store/members.js';
 import { checkRateLimit } from '../services/rateLimit.js';
 import { containsRestrictedContent } from '../services/linkFilter.js';
@@ -11,29 +12,59 @@ async function isAdmin(ctx: Context, chatId: number, userId: number): Promise<bo
   return member.status === 'administrator' || member.status === 'creator';
 }
 
+// 對受限對象套用內容限制。回傳 true 表示訊息已刪除。
+// 相簿只有一則帶 caption，其餘圖片在命中前後陸續抵達，得靠標記補刪。
+async function enforceContentRestriction(
+  ctx: Context,
+  chatId: number,
+  msg: Message,
+  subject: string,
+  isExempt: () => Promise<boolean>
+): Promise<boolean> {
+  const albumId = msg.media_group_id;
+
+  if (albumId !== undefined && trackAlbumMessage(chatId, albumId, msg.message_id)) {
+    await ctx.deleteMessage();
+    console.log(`[連結過濾] 刪除${subject}已判定違規相簿的後續圖片`);
+    return true;
+  }
+
+  if (!containsRestrictedContent(msg, ctx.me?.username)) return false;
+  if (await isExempt()) return false;
+
+  // 先標記再刪：刪除失敗（429、暫時性錯誤）時後續抵達的圖片仍要擋
+  const earlier = albumId !== undefined ? flagAlbum(chatId, albumId, msg.message_id) : [];
+  await ctx.deleteMessage();
+  const kind = ctx.editedMessage ? '編輯後' : '';
+  console.log(`[連結過濾] 刪除${subject}的${kind}訊息（含連結、@bot 提及或外部載體）`);
+
+  if (earlier.length > 0) {
+    await ctx.api.deleteMessages(chatId, earlier);
+    console.log(`[連結過濾] 一併刪除同相簿先前抵達的 ${earlier.length} 則訊息`);
+  }
+  return true;
+}
+
 // 匿名管理員（以群組本身的身分發言）與連結頻道的自動轉發都是管理員層級的行為，放行。
 // 其他頻道身分無法對應到任何成員的加入紀錄，也無法禁言，
 // 而用一次性頻道當馬甲打廣告是常見手法：一律套用新成員的內容限制，洪水則直接刪訊息。
-async function handleSenderChatMessage(
+async function handleChatIdentityMessage(
   ctx: Context,
   next: NextFunction,
   chatId: number,
+  msg: Message,
   senderChatId: number
 ) {
-  const msg = ctx.msg!;
   if (senderChatId === chatId || msg.is_automatic_forward) {
     return next();
   }
 
-  if (containsRestrictedContent(msg, ctx.me?.username)) {
-    await ctx.deleteMessage();
-    console.log(`[連結過濾] 刪除頻道身分 ${senderChatId} 的訊息（含連結、@bot 提及或外部載體）`);
-    return;
-  }
+  const subject = `頻道身分 ${senderChatId}`;
+  if (await enforceContentRestriction(ctx, chatId, msg, subject, async () => false)) return;
 
   if (!ctx.editedMessage && checkRateLimit(chatId, senderChatId, msg.media_group_id)) {
     await ctx.deleteMessage();
-    console.log(`[洪水偵測] 頻道身分 ${senderChatId} 發送過於頻繁，刪除訊息`);
+    console.log(`[洪水偵測] ${subject}發送過於頻繁，刪除訊息`);
     return;
   }
 
@@ -44,47 +75,35 @@ async function handleSenderChatMessage(
 // 編輯是連結過濾的破口：先發無害文字，事後再改成廣告。
 export async function handleMessage(ctx: Context, next: NextFunction) {
   const chat = ctx.chat;
-  const userId = ctx.from?.id;
   const msg = ctx.msg;
 
   // 只處理群組訊息
-  if (!chat || !userId || !msg || (chat.type !== 'group' && chat.type !== 'supergroup')) {
+  if (!chat || !msg || (chat.type !== 'group' && chat.type !== 'supergroup')) {
     return next();
   }
 
   const chatId = chat.id;
-  const albumId = msg.media_group_id;
 
   // 以頻道身分或匿名管理員發言時，from 只是 Telegram 的服務帳號，真正的主體在 sender_chat。
-  if (msg.sender_chat) {
-    return handleSenderChatMessage(ctx, next, chatId, msg.sender_chat.id);
+  // guest bot 代發的訊息 from 是那個 bot，責任主體是觸發它的使用者或頻道。
+  const identityChatId = msg.guest_bot_caller_chat?.id ?? msg.sender_chat?.id;
+  if (identityChatId !== undefined) {
+    return handleChatIdentityMessage(ctx, next, chatId, msg, identityChatId);
   }
+
+  const userId = msg.guest_bot_caller_user?.id ?? ctx.from?.id;
+  if (!userId) return next();
 
   // 1. 新成員在加入後的限制期內禁止發連結、@bot 提及、轉發、inline bot 內容。
   //    綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
   //    真正的破口是「通過驗證後先潛伏、隔一段時間再發廣告」。
-  if (isRecentMember(chatId, userId, config.linkRestrictWindowMs)) {
-    // 相簿只有一則帶 caption，其餘圖片在命中後才陸續抵達，得靠標記補刪
-    if (albumId !== undefined && trackAlbumMessage(chatId, albumId, msg.message_id)) {
-      await ctx.deleteMessage();
-      console.log(`[連結過濾] 刪除新成員 ${userId} 已判定違規相簿的後續圖片`);
-      return;
-    }
-
-    if (containsRestrictedContent(msg, ctx.me?.username) && !(await isAdmin(ctx, chatId, userId))) {
-      await ctx.deleteMessage();
-      const kind = ctx.editedMessage ? '編輯後' : '';
-      console.log(`[連結過濾] 刪除新成員 ${userId} 的${kind}訊息（含連結、@bot 提及或外部載體）`);
-
-      if (albumId !== undefined) {
-        const earlier = flagAlbum(chatId, albumId, msg.message_id);
-        if (earlier.length > 0) {
-          await ctx.api.deleteMessages(chatId, earlier);
-          console.log(`[連結過濾] 一併刪除同相簿先前抵達的 ${earlier.length} 則訊息`);
-        }
-      }
-      return;
-    }
+  if (
+    isRecentMember(chatId, userId, config.linkRestrictWindowMs) &&
+    (await enforceContentRestriction(ctx, chatId, msg, `新成員 ${userId}`, () =>
+      isAdmin(ctx, chatId, userId)
+    ))
+  ) {
+    return;
   }
 
   // 編輯不是新的發言，不計入洪水

@@ -6,6 +6,9 @@
 // 相簿的訊息在幾秒內就會到齊，記錄只需保留很短的時間。
 
 const ALBUM_TTL_MS = 60_000;
+// 全掃一次 Map 的成本隨追蹤中的相簿數成長，固定間隔清一次就夠
+const SWEEP_INTERVAL_MS = 10_000;
+let lastSweepAt = 0;
 
 interface Album {
   messageIds: Set<number>;
@@ -20,6 +23,8 @@ function key(chatId: number, mediaGroupId: string): string {
 }
 
 function sweep(now: number) {
+  if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
+  lastSweepAt = now;
   for (const [k, album] of albums) {
     if (now - album.touchedAt >= ALBUM_TTL_MS) albums.delete(k);
   }
@@ -64,4 +69,5 @@ export function flagAlbum(
 
 export function _resetAlbumTracker() {
   albums.clear();
+  lastSweepAt = 0;
 }

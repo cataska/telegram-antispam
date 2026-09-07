@@ -149,6 +149,30 @@ describe('containsExternalCarrier', () => {
     ).toBe(true);
   });
 
+  it('只有 callback 按鈕的 inline keyboard 不算', () => {
+    expect(
+      containsExternalCarrier({
+        ...base,
+        text: 'x',
+        reply_markup: { inline_keyboard: [[{ text: 'ok', callback_data: 'ok' }]] },
+      })
+    ).toBe(false);
+  });
+
+  it('guest bot 代發的訊息算外部載體', () => {
+    expect(
+      containsExternalCarrier({
+        ...base,
+        text: 'x',
+        guest_bot_caller_user: { id: 3, is_bot: false, first_name: 'C' },
+      })
+    ).toBe(true);
+  });
+
+  it('rich message 算外部載體（只有 bot 能送）', () => {
+    expect(containsExternalCarrier({ ...base, rich_message: { blocks: [] } })).toBe(true);
+  });
+
   it('一般文字訊息不算', () => {
     expect(containsExternalCarrier({ ...base, text: '早安' })).toBe(false);
   });

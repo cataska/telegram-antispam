@@ -1,4 +1,4 @@
-import type { Message, MessageEntity } from 'grammy/types';
+import type { InlineKeyboardButton, Message, MessageEntity } from 'grammy/types';
 
 const URL_REGEX = /https?:\/\/[^\s]+|www\.[^\s]+|t\.me\/[^\s]+/i;
 
@@ -35,15 +35,31 @@ export function containsBotMention(
   });
 }
 
+// 會把人帶離群組的按鈕：開網址、登入、小程式、切換到 inline bot。
+// callback、複製文字、付款等按鈕留在原地，不算。
+function opensExternal(button: InlineKeyboardButton): boolean {
+  return (
+    'url' in button ||
+    'login_url' in button ||
+    'web_app' in button ||
+    'switch_inline_query' in button ||
+    'switch_inline_query_current_chat' in button ||
+    'switch_inline_query_chosen_chat' in button
+  );
+}
+
 // 訊息本身就是可點擊的外部入口，不需要文字裡有連結：
 // - 轉發：來源頻道／使用者的標頭可點擊，純圖片轉發也能宣傳
 // - via_bot：透過 inline bot 送出的內容，標頭就是那個 bot
-// - inline keyboard：一般使用者無法自帶按鈕，會出現代表是 inline bot 產生的內容，
-//   按鈕可帶 URL 或觸發其他 bot
+// - guest bot 代發：訊息的發送者就是那個 bot
+// - rich_message：只有 bot 能送，內容結構自帶連結與按鈕，出現即代表 bot 產生的內容
+// - inline keyboard 裡會開外部目標的按鈕
 export function containsExternalCarrier(msg: Message): boolean {
   if (msg.forward_origin) return true;
   if (msg.via_bot) return true;
-  if (msg.reply_markup?.inline_keyboard?.some((row) => row.length > 0)) return true;
+  if (msg.guest_bot_caller_user || msg.guest_bot_caller_chat) return true;
+  if (msg.rich_message) return true;
+  if (msg.reply_markup?.inline_keyboard?.some((row) => row.some(opensExternal))) return true;
   return false;
 }
 

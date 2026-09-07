@@ -20,6 +20,12 @@ interface CtxOptions {
   replyMarkup?: Record<string, unknown>;
   senderChat?: Record<string, unknown>;
   isAutomaticForward?: boolean;
+  caption?: string;
+  captionEntities?: Array<Record<string, unknown>>;
+  richMessage?: Record<string, unknown>;
+  guestCallerUser?: Record<string, unknown>;
+  fromId?: number;
+  deleteFails?: boolean;
 }
 
 function makeCtx(opts: CtxOptions) {
@@ -33,15 +39,21 @@ function makeCtx(opts: CtxOptions) {
     reply_markup: opts.replyMarkup,
     sender_chat: opts.senderChat,
     is_automatic_forward: opts.isAutomaticForward,
+    caption: opts.caption,
+    caption_entities: opts.captionEntities,
+    rich_message: opts.richMessage,
+    guest_bot_caller_user: opts.guestCallerUser,
   };
   return {
     chat: { id: opts.chatId, type: opts.chatType ?? 'supergroup' },
-    from: { id: opts.userId, first_name: 'Test' },
+    from: { id: opts.fromId ?? opts.userId, first_name: 'Test' },
     me: { username: 'test_bot' },
     msg,
     message: opts.edited ? undefined : msg,
     editedMessage: opts.edited ? msg : undefined,
-    deleteMessage: vi.fn().mockResolvedValue(true),
+    deleteMessage: opts.deleteFails
+      ? vi.fn().mockRejectedValue(new Error('429: Too Many Requests'))
+      : vi.fn().mockResolvedValue(true),
     reply: vi.fn().mockResolvedValue({}),
     api: {
       restrictChatMember: vi.fn().mockResolvedValue(true),
@@ -280,6 +292,109 @@ describe('handleMessage', () => {
     expect(late.deleteMessage).toHaveBeenCalled();
   });
 
+  it('相簿命中時刪除失敗，後續圖片仍會被擋（先標記再刪）', async () => {
+    recordMemberJoin(chatId, userId);
+    const next = vi.fn();
+
+    const hit = makeCtx({
+      chatId,
+      userId,
+      mediaGroupId: 'flaky-album',
+      messageId: 301,
+      caption: '加入 t.me/spamgroup',
+      deleteFails: true,
+    });
+    await expect(handleMessage(hit, next)).rejects.toThrow('429');
+
+    const late = makeCtx({ chatId, userId, mediaGroupId: 'flaky-album', messageId: 302 });
+    await handleMessage(late, next);
+    expect(late.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('圖片 caption 藏連結（caption_entities text_link）會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      caption: '點我',
+      captionEntities: [{ type: 'text_link', offset: 0, length: 2, url: 'https://spam.example.com' }],
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('圖片 caption 事後編輯成連結會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({ chatId, userId, edited: true, caption: '補上 https://spam.example.com' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('只有 callback 按鈕的訊息不會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '投票',
+      replyMarkup: { inline_keyboard: [[{ text: '讚', callback_data: 'up' }]] },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('guest bot 代發的訊息以觸發者為責任主體：觸發者是新成員就刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      fromId: 999001, // 訊息的 from 是 guest bot 本身
+      text: '來自 guest bot 的內容',
+      guestCallerUser: { id: userId, is_bot: false, first_name: 'Caller' },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+    expect(ctx.api.getChatMember).toHaveBeenCalledWith(chatId, userId);
+  });
+
+  it('guest bot 代發的訊息：觸發者是老成員則放行', async () => {
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      fromId: 999001,
+      text: '來自 guest bot 的內容',
+      guestCallerUser: { id: userId, is_bot: false, first_name: 'Caller' },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('限制期內的新成員觸發的 rich message 會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({ chatId, userId, richMessage: { blocks: [] } });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
   it('限制期內正常的相簿不會被刪', async () => {
     recordMemberJoin(chatId, userId);
     const next = vi.fn();
@@ -388,6 +503,29 @@ describe('handleMessage', () => {
       await handleMessage(ctx, next);
 
       expect(ctx.deleteMessage).toHaveBeenCalled();
+    });
+
+    it('以頻道身分發相簿、caption 在中間帶連結：整組刪除', async () => {
+      const next = vi.fn();
+      const first = makeCtx({ chatId, userId: channelBot, senderChat: spamChannel, mediaGroupId: 'ch-album', messageId: 401 });
+      await handleMessage(first, next);
+      expect(first.deleteMessage).not.toHaveBeenCalled();
+
+      const hit = makeCtx({
+        chatId,
+        userId: channelBot,
+        senderChat: spamChannel,
+        mediaGroupId: 'ch-album',
+        messageId: 402,
+        caption: '加入 t.me/spamgroup',
+      });
+      await handleMessage(hit, next);
+      expect(hit.deleteMessage).toHaveBeenCalled();
+      expect(hit.api.deleteMessages).toHaveBeenCalledWith(chatId, [401]);
+
+      const late = makeCtx({ chatId, userId: channelBot, senderChat: spamChannel, mediaGroupId: 'ch-album', messageId: 403 });
+      await handleMessage(late, next);
+      expect(late.deleteMessage).toHaveBeenCalled();
     });
 
     it('以頻道身分發一般文字放行', async () => {
