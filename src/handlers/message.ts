@@ -2,6 +2,7 @@ import { Context, NextFunction } from 'grammy';
 import { isRecentMember } from '../store/members.js';
 import { checkRateLimit } from '../services/rateLimit.js';
 import { containsRestrictedContent } from '../services/linkFilter.js';
+import { trackAlbumMessage, flagAlbum } from '../services/albumTracker.js';
 import { config } from '../config.js';
 
 // 管理員豁免所有限制。只在即將處置時才查，避免每則訊息都打一次 API。
@@ -23,19 +24,33 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
   }
 
   const chatId = chat.id;
+  const albumId = msg.media_group_id;
 
   // 1. 新成員在加入後的限制期內禁止發連結、@bot 提及、轉發、inline bot 內容。
   //    綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
   //    真正的破口是「通過驗證後先潛伏、隔一段時間再發廣告」。
-  if (
-    isRecentMember(chatId, userId, config.linkRestrictWindowMs) &&
-    containsRestrictedContent(msg, ctx.me?.username) &&
-    !(await isAdmin(ctx, chatId, userId))
-  ) {
-    await ctx.deleteMessage();
-    const kind = ctx.editedMessage ? '編輯後' : '';
-    console.log(`[連結過濾] 刪除新成員 ${userId} 的${kind}訊息（含連結、@bot 提及或外部載體）`);
-    return;
+  if (isRecentMember(chatId, userId, config.linkRestrictWindowMs)) {
+    // 相簿只有一則帶 caption，其餘圖片在命中後才陸續抵達，得靠標記補刪
+    if (albumId !== undefined && trackAlbumMessage(chatId, albumId, msg.message_id)) {
+      await ctx.deleteMessage();
+      console.log(`[連結過濾] 刪除新成員 ${userId} 已判定違規相簿的後續圖片`);
+      return;
+    }
+
+    if (containsRestrictedContent(msg, ctx.me?.username) && !(await isAdmin(ctx, chatId, userId))) {
+      await ctx.deleteMessage();
+      const kind = ctx.editedMessage ? '編輯後' : '';
+      console.log(`[連結過濾] 刪除新成員 ${userId} 的${kind}訊息（含連結、@bot 提及或外部載體）`);
+
+      if (albumId !== undefined) {
+        const earlier = flagAlbum(chatId, albumId, msg.message_id);
+        if (earlier.length > 0) {
+          await ctx.api.deleteMessages(chatId, earlier);
+          console.log(`[連結過濾] 一併刪除同相簿先前抵達的 ${earlier.length} 則訊息`);
+        }
+      }
+      return;
+    }
   }
 
   // 編輯不是新的發言，不計入洪水

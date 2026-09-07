@@ -3,6 +3,7 @@ import { handleMessage } from './message.js';
 import { openDb } from '../db.js';
 import { initStores } from '../store/index.js';
 import { recordMemberJoin } from '../store/members.js';
+import { _resetAlbumTracker } from '../services/albumTracker.js';
 
 interface CtxOptions {
   chatId: number;
@@ -10,6 +11,7 @@ interface CtxOptions {
   chatType?: string;
   text?: string;
   mediaGroupId?: string;
+  messageId?: number;
   memberStatus?: string;
   entities?: Array<Record<string, unknown>>;
   edited?: boolean;
@@ -20,6 +22,7 @@ interface CtxOptions {
 
 function makeCtx(opts: CtxOptions) {
   const msg = {
+    message_id: opts.messageId ?? 1,
     text: opts.text ?? '',
     media_group_id: opts.mediaGroupId,
     entities: opts.entities,
@@ -38,6 +41,7 @@ function makeCtx(opts: CtxOptions) {
     reply: vi.fn().mockResolvedValue({}),
     api: {
       restrictChatMember: vi.fn().mockResolvedValue(true),
+      deleteMessages: vi.fn().mockResolvedValue(true),
       getChatMember: vi
         .fn()
         .mockResolvedValue({ status: opts.memberStatus ?? 'member' }),
@@ -56,6 +60,7 @@ describe('handleMessage', () => {
     vi.useFakeTimers();
     chatId = nextChatId++;
     initStores(openDb(':memory:'));
+    _resetAlbumTracker();
   });
 
   afterEach(() => {
@@ -240,6 +245,45 @@ describe('handleMessage', () => {
     await handleMessage(ctx, next);
 
     expect(ctx.deleteMessage).not.toHaveBeenCalled();
+  });
+
+  it('相簿只有一張帶連結 caption：整組相簿都會被刪，含先到與後到的圖片', async () => {
+    recordMemberJoin(chatId, userId);
+    const next = vi.fn();
+
+    // 前兩張沒有 caption，先抵達
+    for (const id of [101, 102]) {
+      const ctx = makeCtx({ chatId, userId, mediaGroupId: 'ad-album', messageId: id });
+      await handleMessage(ctx, next);
+      expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    }
+
+    // 第三張帶廣告 caption
+    const hit = makeCtx({
+      chatId,
+      userId,
+      mediaGroupId: 'ad-album',
+      messageId: 103,
+      text: '加入 t.me/spamgroup',
+    });
+    await handleMessage(hit, next);
+    expect(hit.deleteMessage).toHaveBeenCalled();
+    expect(hit.api.deleteMessages).toHaveBeenCalledWith(chatId, [101, 102]);
+
+    // 第四張晚到、沒有 caption，也要刪
+    const late = makeCtx({ chatId, userId, mediaGroupId: 'ad-album', messageId: 104 });
+    await handleMessage(late, next);
+    expect(late.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('限制期內正常的相簿不會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const next = vi.fn();
+    for (const id of [201, 202, 203]) {
+      const ctx = makeCtx({ chatId, userId, mediaGroupId: 'ok-album', messageId: id, text: id === 201 ? '出遊照片' : '' });
+      await handleMessage(ctx, next);
+      expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    }
   });
 
   it('限制期內的新成員 @一般人不會被刪', async () => {
