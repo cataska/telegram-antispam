@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { containsLink, containsBotMention } from './linkFilter.js';
+import { containsLink, containsBotMention, containsExternalCarrier } from './linkFilter.js';
 
 describe('containsLink', () => {
   it('偵測 http/https 連結', () => {
@@ -97,5 +97,59 @@ describe('containsBotMention', () => {
 
   it('純文字裡出現 bot 字樣不誤判', () => {
     expect(containsBotMention('這個 bot 很好用')).toBe(false);
+  });
+
+  it('偵測帶 @ 的指令（/start@SomeBot 點下去會開啟那個 bot，即使名稱不以 bot 結尾）', () => {
+    expect(
+      containsBotMention('/start@SpamCollectible', [{ type: 'bot_command', offset: 0, length: 22 }])
+    ).toBe(true);
+  });
+
+  it('指向本 bot 的指令不算（不分大小寫）', () => {
+    expect(
+      containsBotMention('/help@Test_Bot', [{ type: 'bot_command', offset: 0, length: 14 }], 'test_bot')
+    ).toBe(false);
+  });
+
+  it('不帶 @ 的指令不算', () => {
+    expect(containsBotMention('/help', [{ type: 'bot_command', offset: 0, length: 5 }])).toBe(false);
+  });
+});
+
+describe('containsExternalCarrier', () => {
+  const base = { message_id: 1, date: 0, chat: { id: 1, type: 'supergroup' as const, title: 't' } };
+
+  it('轉發訊息算外部載體', () => {
+    expect(
+      containsExternalCarrier({
+        ...base,
+        text: 'x',
+        forward_origin: { type: 'hidden_user', sender_user_name: 'X', date: 0 },
+      })
+    ).toBe(true);
+  });
+
+  it('透過 inline bot 送出的訊息算外部載體', () => {
+    expect(
+      containsExternalCarrier({
+        ...base,
+        text: 'x',
+        via_bot: { id: 7, is_bot: true, first_name: 'Inline' },
+      })
+    ).toBe(true);
+  });
+
+  it('帶 inline keyboard 的訊息算外部載體', () => {
+    expect(
+      containsExternalCarrier({
+        ...base,
+        text: 'x',
+        reply_markup: { inline_keyboard: [[{ text: 'go', url: 'https://x.example' }]] },
+      })
+    ).toBe(true);
+  });
+
+  it('一般文字訊息不算', () => {
+    expect(containsExternalCarrier({ ...base, text: '早安' })).toBe(false);
   });
 });

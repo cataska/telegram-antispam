@@ -13,6 +13,9 @@ interface CtxOptions {
   memberStatus?: string;
   entities?: Array<Record<string, unknown>>;
   edited?: boolean;
+  forwardOrigin?: Record<string, unknown>;
+  viaBot?: Record<string, unknown>;
+  replyMarkup?: Record<string, unknown>;
 }
 
 function makeCtx(opts: CtxOptions) {
@@ -20,10 +23,14 @@ function makeCtx(opts: CtxOptions) {
     text: opts.text ?? '',
     media_group_id: opts.mediaGroupId,
     entities: opts.entities,
+    forward_origin: opts.forwardOrigin,
+    via_bot: opts.viaBot,
+    reply_markup: opts.replyMarkup,
   };
   return {
     chat: { id: opts.chatId, type: opts.chatType ?? 'supergroup' },
     from: { id: opts.userId, first_name: 'Test' },
+    me: { username: 'test_bot' },
     msg,
     message: opts.edited ? undefined : msg,
     editedMessage: opts.edited ? msg : undefined,
@@ -143,6 +150,96 @@ describe('handleMessage', () => {
 
     expect(ctx.deleteMessage).toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('限制期內的新成員發 /start@SomeBot 指令會被刪除（bot_command 形式的 bot 提及）', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '/start@SpamCollectible',
+      entities: [{ type: 'bot_command', offset: 0, length: 22 }],
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('限制期內的新成員對本 bot 下指令不會被刪', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '/help@test_bot',
+      entities: [{ type: 'bot_command', offset: 0, length: 14 }],
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+  });
+
+  it('限制期內的新成員轉發訊息會被刪除（轉發來源標頭可點擊）', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '看看這個',
+      forwardOrigin: { type: 'channel', chat: { id: -100999, type: 'channel' }, message_id: 1, date: 0 },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('限制期內的新成員透過 inline bot 送出的內容會被刪除', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '結果',
+      viaBot: { id: 7, is_bot: true, first_name: 'Inline', username: 'inlinebot' },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('限制期內的新成員訊息帶按鈕會被刪除', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '點下面',
+      replyMarkup: { inline_keyboard: [[{ text: '進入', url: 'https://spam.example.com' }]] },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('限制期已過的成員轉發訊息不受影響', async () => {
+    recordMemberJoin(chatId, userId, Date.now() - 25 * 3_600_000);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      text: '轉一下',
+      forwardOrigin: { type: 'user', sender_user: { id: 5, is_bot: false, first_name: 'A' }, date: 0 },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
   });
 
   it('限制期內的新成員 @一般人不會被刪', async () => {
