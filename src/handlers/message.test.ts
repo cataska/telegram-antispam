@@ -18,6 +18,8 @@ interface CtxOptions {
   forwardOrigin?: Record<string, unknown>;
   viaBot?: Record<string, unknown>;
   replyMarkup?: Record<string, unknown>;
+  senderChat?: Record<string, unknown>;
+  isAutomaticForward?: boolean;
 }
 
 function makeCtx(opts: CtxOptions) {
@@ -29,6 +31,8 @@ function makeCtx(opts: CtxOptions) {
     forward_origin: opts.forwardOrigin,
     via_bot: opts.viaBot,
     reply_markup: opts.replyMarkup,
+    sender_chat: opts.senderChat,
+    is_automatic_forward: opts.isAutomaticForward,
   };
   return {
     chat: { id: opts.chatId, type: opts.chatType ?? 'supergroup' },
@@ -353,6 +357,92 @@ describe('handleMessage', () => {
 
     expect(ctx.deleteMessage).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalled();
+  });
+
+  describe('sender_chat（頻道身分／匿名管理員）', () => {
+    // Telegram 用固定的服務帳號當 from
+    const channelBot = 136817688;
+    const spamChannel = { id: -100777, type: 'channel', title: 'Ad' };
+
+    it('以頻道身分發連結會被刪除，不需加入紀錄', async () => {
+      const ctx = makeCtx({ chatId, userId: channelBot, senderChat: spamChannel, text: 'https://spam.example.com' });
+      const next = vi.fn();
+
+      await handleMessage(ctx, next);
+
+      expect(ctx.deleteMessage).toHaveBeenCalled();
+      expect(ctx.api.getChatMember).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('以頻道身分轉發訊息會被刪除', async () => {
+      const ctx = makeCtx({
+        chatId,
+        userId: channelBot,
+        senderChat: spamChannel,
+        text: 'x',
+        forwardOrigin: { type: 'channel', chat: spamChannel, message_id: 1, date: 0 },
+      });
+      const next = vi.fn();
+
+      await handleMessage(ctx, next);
+
+      expect(ctx.deleteMessage).toHaveBeenCalled();
+    });
+
+    it('以頻道身分發一般文字放行', async () => {
+      const ctx = makeCtx({ chatId, userId: channelBot, senderChat: spamChannel, text: '哈囉' });
+      const next = vi.fn();
+
+      await handleMessage(ctx, next);
+
+      expect(ctx.deleteMessage).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('以頻道身分洪水發言：刪訊息而不是對服務帳號禁言', async () => {
+      const next = vi.fn();
+      let ctx;
+      for (let i = 0; i < 6; i++) {
+        ctx = makeCtx({ chatId, userId: channelBot, senderChat: spamChannel, text: `廣告 ${i}` });
+        await handleMessage(ctx, next);
+      }
+
+      expect(ctx.deleteMessage).toHaveBeenCalled();
+      expect(ctx.api.restrictChatMember).not.toHaveBeenCalled();
+    });
+
+    it('匿名管理員（sender_chat 即群組本身）發連結不受影響', async () => {
+      const ctx = makeCtx({
+        chatId,
+        userId: 1087968824,
+        senderChat: { id: chatId, type: 'supergroup', title: 'Group' },
+        text: '公告 https://example.com',
+      });
+      const next = vi.fn();
+
+      await handleMessage(ctx, next);
+
+      expect(ctx.deleteMessage).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('連結頻道的自動轉發不受影響', async () => {
+      const ctx = makeCtx({
+        chatId,
+        userId: 777000,
+        senderChat: { id: -100555, type: 'channel', title: 'Linked' },
+        isAutomaticForward: true,
+        text: '新文章 https://example.com/post',
+        forwardOrigin: { type: 'channel', chat: { id: -100555, type: 'channel' }, message_id: 9, date: 0 },
+      });
+      const next = vi.fn();
+
+      await handleMessage(ctx, next);
+
+      expect(ctx.deleteMessage).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalled();
+    });
   });
 
   it('一般成員洪水發言會被禁言', async () => {

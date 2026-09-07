@@ -11,6 +11,35 @@ async function isAdmin(ctx: Context, chatId: number, userId: number): Promise<bo
   return member.status === 'administrator' || member.status === 'creator';
 }
 
+// 匿名管理員（以群組本身的身分發言）與連結頻道的自動轉發都是管理員層級的行為，放行。
+// 其他頻道身分無法對應到任何成員的加入紀錄，也無法禁言，
+// 而用一次性頻道當馬甲打廣告是常見手法：一律套用新成員的內容限制，洪水則直接刪訊息。
+async function handleSenderChatMessage(
+  ctx: Context,
+  next: NextFunction,
+  chatId: number,
+  senderChatId: number
+) {
+  const msg = ctx.msg!;
+  if (senderChatId === chatId || msg.is_automatic_forward) {
+    return next();
+  }
+
+  if (containsRestrictedContent(msg, ctx.me?.username)) {
+    await ctx.deleteMessage();
+    console.log(`[連結過濾] 刪除頻道身分 ${senderChatId} 的訊息（含連結、@bot 提及或外部載體）`);
+    return;
+  }
+
+  if (!ctx.editedMessage && checkRateLimit(chatId, senderChatId, msg.media_group_id)) {
+    await ctx.deleteMessage();
+    console.log(`[洪水偵測] 頻道身分 ${senderChatId} 發送過於頻繁，刪除訊息`);
+    return;
+  }
+
+  return next();
+}
+
 // 同時處理新訊息與編輯後的訊息（ctx.msg 兩者皆涵蓋）。
 // 編輯是連結過濾的破口：先發無害文字，事後再改成廣告。
 export async function handleMessage(ctx: Context, next: NextFunction) {
@@ -25,6 +54,11 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
 
   const chatId = chat.id;
   const albumId = msg.media_group_id;
+
+  // 以頻道身分或匿名管理員發言時，from 只是 Telegram 的服務帳號，真正的主體在 sender_chat。
+  if (msg.sender_chat) {
+    return handleSenderChatMessage(ctx, next, chatId, msg.sender_chat.id);
+  }
 
   // 1. 新成員在加入後的限制期內禁止發連結、@bot 提及、轉發、inline bot 內容。
   //    綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
