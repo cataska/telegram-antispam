@@ -4,6 +4,7 @@ import { setupHandlers } from './handlers/index.js';
 import { getPending } from './store/pending.js';
 import { openDb } from './db.js';
 import { initStores } from './store/index.js';
+import { recordMemberJoin } from './store/members.js';
 
 // 整合測試：用真實 Bot 實例走 bot.handleUpdate()，驗證事件路由接線
 // （filter 匹配、註冊順序），API 呼叫由 transformer 攔截不出網路。
@@ -126,6 +127,20 @@ function textUpdate(chatId: number, from: any, text: string) {
   } as any;
 }
 
+function editedTextUpdate(chatId: number, from: any, text: string, messageId: number) {
+  return {
+    update_id: updateId++,
+    edited_message: {
+      message_id: messageId,
+      date: 0,
+      edit_date: 1,
+      chat: { id: chatId, type: 'supergroup' },
+      from,
+      text,
+    },
+  } as any;
+}
+
 // 每個測試用不同 chatId，避免 joinFlood / rateLimit 模組狀態互相干擾
 let nextChatId = -200_000;
 
@@ -222,6 +237,18 @@ describe('整合：事件路由接線', () => {
     );
     expect(mute).toBeDefined();
     expect(mute!.payload.user_id).toBe(77);
+  });
+
+  it('edited_message 事件路由到訊息檢查：新成員編輯成連結會被刪除', async () => {
+    const { bot, calls } = createTestBot();
+    const member = { id: 89, is_bot: false, first_name: 'Sneaky' };
+    recordMemberJoin(chatId, member.id);
+
+    await bot.handleUpdate(editedTextUpdate(chatId, member, '改成 https://spam.example.com', 555));
+
+    const deleted = calls.filter((c) => c.method === 'deleteMessage');
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0].payload.message_id).toBe(555);
   });
 
   it('服務訊息 handler 不會攔截一般訊息（註冊順序正確）', async () => {

@@ -10,18 +10,21 @@ async function isAdmin(ctx: Context, chatId: number, userId: number): Promise<bo
   return member.status === 'administrator' || member.status === 'creator';
 }
 
+// 同時處理新訊息與編輯後的訊息（ctx.msg 兩者皆涵蓋）。
+// 編輯是連結過濾的破口：先發無害文字，事後再改成廣告。
 export async function handleMessage(ctx: Context, next: NextFunction) {
   const chat = ctx.chat;
   const userId = ctx.from?.id;
+  const msg = ctx.msg;
 
   // 只處理群組訊息
-  if (!chat || !userId || (chat.type !== 'group' && chat.type !== 'supergroup')) {
+  if (!chat || !userId || !msg || (chat.type !== 'group' && chat.type !== 'supergroup')) {
     return next();
   }
 
   const chatId = chat.id;
-  const text = ctx.message?.text || ctx.message?.caption || '';
-  const entities = ctx.message?.entities ?? ctx.message?.caption_entities ?? [];
+  const text = msg.text || msg.caption || '';
+  const entities = msg.entities ?? msg.caption_entities ?? [];
 
   // 1. 新成員在加入後的限制期內禁止發連結與 @bot 提及。
   //    綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
@@ -32,12 +35,18 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
     !(await isAdmin(ctx, chatId, userId))
   ) {
     await ctx.deleteMessage();
-    console.log(`[連結過濾] 刪除新成員 ${userId} 的訊息（含連結或 @bot 提及）`);
+    const kind = ctx.editedMessage ? '編輯後' : '';
+    console.log(`[連結過濾] 刪除新成員 ${userId} 的${kind}訊息（含連結或 @bot 提及）`);
     return;
   }
 
+  // 編輯不是新的發言，不計入洪水
+  if (ctx.editedMessage) {
+    return next();
+  }
+
   // 2. 洪水偵測（管理員豁免）
-  const isFlooding = checkRateLimit(chatId, userId, ctx.message?.media_group_id);
+  const isFlooding = checkRateLimit(chatId, userId, msg.media_group_id);
   if (isFlooding) {
     if (await isAdmin(ctx, chatId, userId)) {
       return next();

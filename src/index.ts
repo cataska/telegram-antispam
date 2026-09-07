@@ -47,10 +47,11 @@ const { restored, expired } = restorePending(config.verifyTimeoutMs, async (pend
 });
 console.log(`[啟動] 恢復 ${restored} 筆進行中的驗證，另有 ${expired} 筆已逾時將立即處置`);
 
-// chat_member 不在 getUpdates 的預設回傳範圍，必須明確列出才收得到新成員事件
+// chat_member 不在 getUpdates 的預設回傳範圍，必須明確列出才收得到新成員事件。
+// 一旦指定了 allowed_updates，edited_message 也得明確列出，否則 handler 收不到編輯事件。
 const runner = run(bot, {
   runner: {
-    fetch: { allowed_updates: ['chat_member', 'message', 'callback_query'] },
+    fetch: { allowed_updates: ['chat_member', 'message', 'edited_message', 'callback_query'] },
   },
 });
 console.log('Anti-spam bot is running...');

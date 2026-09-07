@@ -12,17 +12,21 @@ interface CtxOptions {
   mediaGroupId?: string;
   memberStatus?: string;
   entities?: Array<Record<string, unknown>>;
+  edited?: boolean;
 }
 
 function makeCtx(opts: CtxOptions) {
+  const msg = {
+    text: opts.text ?? '',
+    media_group_id: opts.mediaGroupId,
+    entities: opts.entities,
+  };
   return {
     chat: { id: opts.chatId, type: opts.chatType ?? 'supergroup' },
     from: { id: opts.userId, first_name: 'Test' },
-    message: {
-      text: opts.text ?? '',
-      media_group_id: opts.mediaGroupId,
-      entities: opts.entities,
-    },
+    msg,
+    message: opts.edited ? undefined : msg,
+    editedMessage: opts.edited ? msg : undefined,
     deleteMessage: vi.fn().mockResolvedValue(true),
     reply: vi.fn().mockResolvedValue({}),
     api: {
@@ -96,6 +100,29 @@ describe('handleMessage', () => {
     await handleMessage(ctx, next);
 
     expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('限制期內的新成員把訊息編輯成含連結也會被刪除（先發無害文字再改成廣告）', async () => {
+    recordMemberJoin(chatId, userId, Date.now() - 3 * 3_600_000);
+    const ctx = makeCtx({ chatId, userId, edited: true, text: '改好了 https://spam.example.com' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('編輯訊息不計入洪水偵測', async () => {
+    const next = vi.fn();
+    let ctx;
+    for (let i = 0; i < 10; i++) {
+      ctx = makeCtx({ chatId, userId, edited: true, text: `修改 ${i}` });
+      await handleMessage(ctx, next);
+    }
+
+    expect(ctx.api.restrictChatMember).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(10);
   });
 
   it('限制期內的新成員發 @bot 提及會被刪除（廣告改用 bot 提及繞過連結過濾）', async () => {

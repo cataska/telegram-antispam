@@ -14,6 +14,7 @@ export function setupHandlers(bot: Bot) {
   // 入群服務訊息（需在一般訊息檢查之前註冊）
   bot.on('message:new_chat_members', handleServiceMessage);
 
-  // 訊息檢查（連結過濾、洪水偵測）
-  bot.on('message', handleMessage);
+  // 訊息檢查（連結過濾、洪水偵測）。編輯後的訊息也要重新檢查，
+  // 否則先發無害文字、再編輯成廣告就能繞過連結過濾。
+  bot.on(['message', 'edited_message'], handleMessage);
 }
