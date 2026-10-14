@@ -6,7 +6,7 @@ export function initMemberStore(database: DB) {
   db = database;
 }
 
-// 記錄成員加入時間。同一人重新加入時以最新一次為準（限制期重新起算）。
+// 記錄成員加入時間。同一人重新加入時以最新一次為準（限制期與違規次數重新起算）。
 export function recordMemberJoin(chatId: number, userId: number, joinedAt: number = Date.now()) {
   db.prepare(
     `INSERT OR REPLACE INTO members (chat_id, user_id, joined_at) VALUES (?, ?, ?)`
@@ -27,6 +27,17 @@ export function isRecentMember(
     .get(chatId, userId) as { joined_at: number } | undefined;
   if (!row) return false;
   return now - row.joined_at < windowMs;
+}
+
+// 限制期內內容違規次數 +1，回傳累計次數。沒有加入記錄時回傳 0。
+export function recordViolation(chatId: number, userId: number): number {
+  const row = db
+    .prepare(
+      `UPDATE members SET violations = violations + 1
+       WHERE chat_id = ? AND user_id = ? RETURNING violations`
+    )
+    .get(chatId, userId) as { violations: number } | undefined;
+  return row?.violations ?? 0;
 }
 
 // 清掉已過限制期的記錄，避免表隨時間無限成長

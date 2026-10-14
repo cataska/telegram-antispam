@@ -15,12 +15,18 @@ describe('loadConfig', () => {
     expect(config.casTimeoutMs).toBe(3000);
     expect(config.adminMuteSeconds).toBe(86_400);
     expect(config.linkRestrictWindowMs).toBe(86_400_000);
+    expect(config.linkViolationKickThreshold).toBe(3);
     expect(config.dbPath).toBe('./data/antispam.db');
   });
 
   it('LINK_RESTRICT_HOURS 可設為 0 表示停用新成員禁連結', () => {
     expect(loadConfig({ LINK_RESTRICT_HOURS: '0' }).linkRestrictWindowMs).toBe(0);
     expect(loadConfig({ LINK_RESTRICT_HOURS: '48' }).linkRestrictWindowMs).toBe(172_800_000);
+  });
+
+  it('LINK_VIOLATION_KICK 可設為 0 表示只刪訊息、不踢', () => {
+    expect(loadConfig({ LINK_VIOLATION_KICK: '0' }).linkViolationKickThreshold).toBe(0);
+    expect(() => loadConfig({ LINK_VIOLATION_KICK: '-1' })).toThrow('LINK_VIOLATION_KICK');
   });
 
   it('LINK_RESTRICT_HOURS 為負數或非整數時拋錯', () => {

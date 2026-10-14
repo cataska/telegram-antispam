@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { initStores } from './index.js';
-import { recordMemberJoin, isRecentMember, pruneMembers } from './members.js';
+import { recordMemberJoin, isRecentMember, pruneMembers, recordViolation } from './members.js';
 import { openDb } from '../db.js';
 
 const chatId = -100;
@@ -32,6 +32,18 @@ describe('members store', () => {
     recordMemberJoin(chatId, userId, now - DAY_MS - 1);
     recordMemberJoin(chatId, userId, now);
     expect(isRecentMember(chatId, userId, DAY_MS, now)).toBe(true);
+  });
+
+  it('違規次數逐次累計，重新加入時歸零', () => {
+    recordMemberJoin(chatId, userId);
+    expect(recordViolation(chatId, userId)).toBe(1);
+    expect(recordViolation(chatId, userId)).toBe(2);
+    recordMemberJoin(chatId, userId);
+    expect(recordViolation(chatId, userId)).toBe(1);
+  });
+
+  it('沒有加入記錄時違規次數為 0', () => {
+    expect(recordViolation(chatId, 999)).toBe(0);
   });
 
   it('windowMs 為 0（停用）時一律不受限', () => {

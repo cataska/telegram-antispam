@@ -1,6 +1,6 @@
 import { Context, NextFunction } from 'grammy';
 import type { Message } from 'grammy/types';
-import { isRecentMember } from '../store/members.js';
+import { isRecentMember, recordViolation } from '../store/members.js';
 import { checkRateLimit } from '../services/rateLimit.js';
 import { containsRestrictedContent } from '../services/linkFilter.js';
 import { trackAlbumMessage, flagAlbum } from '../services/albumTracker.js';
@@ -14,12 +14,14 @@ async function isAdmin(ctx: Context, chatId: number, userId: number): Promise<bo
 
 // 對受限對象套用內容限制。回傳 true 表示訊息已刪除。
 // 相簿只有一則帶 caption，其餘圖片在命中前後陸續抵達，得靠標記補刪。
+// onViolation 只在新判定違規時呼叫，同相簿的後續圖片不重複計。
 async function enforceContentRestriction(
   ctx: Context,
   chatId: number,
   msg: Message,
   subject: string,
-  isExempt: () => Promise<boolean>
+  isExempt: () => Promise<boolean>,
+  onViolation: () => Promise<void> = async () => {}
 ): Promise<boolean> {
   const albumId = msg.media_group_id;
 
@@ -42,7 +44,28 @@ async function enforceContentRestriction(
     await ctx.api.deleteMessages(chatId, earlier);
     console.log(`[連結過濾] 一併刪除同相簿先前抵達的 ${earlier.length} 則訊息`);
   }
+
+  await onViolation();
   return true;
+}
+
+// 只刪訊息擋不住會持續嘗試的帳號：潛伏過驗證後每隔幾分鐘發一次，
+// 間隔遠大於洪水視窗，刪幾次都不會停。累計到門檻就踢出（可重新加入，
+// 但得重新驗證、限制期與違規次數也重新起算）。
+async function kickRepeatOffender(ctx: Context, chatId: number, userId: number) {
+  const threshold = config.linkViolationKickThreshold;
+  if (threshold <= 0) return;
+
+  const violations = recordViolation(chatId, userId);
+  if (violations < threshold) return;
+
+  try {
+    await ctx.api.banChatMember(chatId, userId);
+    await ctx.api.unbanChatMember(chatId, userId); // 允許重新加入
+    console.log(`[連結過濾] 新成員 ${userId} 限制期內第 ${violations} 次違規，踢出群組`);
+  } catch (e) {
+    console.log(`[連結過濾] 踢出新成員 ${userId} 失敗：${e}`);
+  }
 }
 
 // 匿名管理員（以群組本身的身分發言）與連結頻道的自動轉發都是管理員層級的行為，放行。
@@ -94,13 +117,18 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
   const userId = msg.guest_bot_caller_user?.id ?? ctx.from?.id;
   if (!userId) return next();
 
-  // 1. 新成員在加入後的限制期內禁止發連結、@bot 提及、轉發、inline bot 內容。
-  //    綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
+  // 1. 新成員在加入後的限制期內禁止發連結、@bot 提及、轉發、inline bot 內容，
+  //    屢犯者踢出。綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
   //    真正的破口是「通過驗證後先潛伏、隔一段時間再發廣告」。
   if (
     isRecentMember(chatId, userId, config.linkRestrictWindowMs) &&
-    (await enforceContentRestriction(ctx, chatId, msg, `新成員 ${userId}`, () =>
-      isAdmin(ctx, chatId, userId)
+    (await enforceContentRestriction(
+      ctx,
+      chatId,
+      msg,
+      `新成員 ${userId}`,
+      () => isAdmin(ctx, chatId, userId),
+      () => kickRepeatOffender(ctx, chatId, userId)
     ))
   ) {
     return;

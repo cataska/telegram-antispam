@@ -10,6 +10,7 @@ export interface Config {
   casTimeoutMs: number;
   adminMuteSeconds: number;
   linkRestrictWindowMs: number;
+  linkViolationKickThreshold: number;
   dbPath: string;
 }
 
@@ -58,6 +59,8 @@ export function loadConfig(env: Env = process.env): Config {
     adminMuteSeconds: positiveInt(env, 'ADMIN_MUTE_SECONDS', 86_400),
     // 0 表示停用「新成員禁連結」
     linkRestrictWindowMs: nonNegativeInt(env, 'LINK_RESTRICT_HOURS', 24) * 3_600_000,
+    // 限制期內累計幾次內容違規就踢出；0 表示只刪訊息、不踢
+    linkViolationKickThreshold: nonNegativeInt(env, 'LINK_VIOLATION_KICK', 3),
     dbPath: env.DB_PATH || './data/antispam.db',
   };
 }

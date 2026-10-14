@@ -39,10 +39,17 @@ export function openDb(path: string): DB {
     CREATE TABLE IF NOT EXISTS members (
       chat_id   INTEGER NOT NULL,
       user_id   INTEGER NOT NULL,
-      joined_at INTEGER NOT NULL,
+      joined_at  INTEGER NOT NULL,
+      violations INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (chat_id, user_id)
     )
   `);
+
+  // 舊資料庫的 members 表沒有 violations 欄位，補上
+  const memberColumns = db.prepare(`PRAGMA table_info(members)`).all() as { name: string }[];
+  if (!memberColumns.some((column) => column.name === 'violations')) {
+    db.exec(`ALTER TABLE members ADD COLUMN violations INTEGER NOT NULL DEFAULT 0`);
+  }
 
   return db;
 }

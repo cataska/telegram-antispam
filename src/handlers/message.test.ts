@@ -57,6 +57,8 @@ function makeCtx(opts: CtxOptions) {
     reply: vi.fn().mockResolvedValue({}),
     api: {
       restrictChatMember: vi.fn().mockResolvedValue(true),
+      banChatMember: vi.fn().mockResolvedValue(true),
+      unbanChatMember: vi.fn().mockResolvedValue(true),
       deleteMessages: vi.fn().mockResolvedValue(true),
       getChatMember: vi
         .fn()
@@ -393,6 +395,51 @@ describe('handleMessage', () => {
     await handleMessage(ctx, next);
 
     expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
+
+  it('限制期內第 3 次違規踢出（可重新加入）：慢速重試間隔遠大於洪水視窗也擋得到', async () => {
+    recordMemberJoin(chatId, userId, Date.now() - 13 * 3_600_000);
+    const next = vi.fn();
+
+    for (let i = 1; i <= 3; i++) {
+      vi.advanceTimersByTime(10 * 60_000);
+      const ctx = makeCtx({ chatId, userId, messageId: i, text: 't.me/spamgroup' });
+      await handleMessage(ctx, next);
+      expect(ctx.deleteMessage).toHaveBeenCalled();
+      if (i < 3) {
+        expect(ctx.api.banChatMember).not.toHaveBeenCalled();
+      } else {
+        expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
+        expect(ctx.api.unbanChatMember).toHaveBeenCalledWith(chatId, userId);
+      }
+    }
+  });
+
+  it('違規相簿整組只算一次違規', async () => {
+    recordMemberJoin(chatId, userId);
+    const next = vi.fn();
+
+    for (const album of ['a1', 'a2']) {
+      const hit = makeCtx({ chatId, userId, mediaGroupId: album, text: 't.me/spamgroup' });
+      await handleMessage(hit, next);
+      for (const id of [2, 3, 4]) {
+        const rest = makeCtx({ chatId, userId, mediaGroupId: album, messageId: id });
+        await handleMessage(rest, next);
+        expect(rest.deleteMessage).toHaveBeenCalled();
+        expect(rest.api.banChatMember).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it('管理員在限制期內多次發連結不會被踢', async () => {
+    recordMemberJoin(chatId, userId);
+    const next = vi.fn();
+
+    for (let i = 1; i <= 3; i++) {
+      const ctx = makeCtx({ chatId, userId, messageId: i, memberStatus: 'administrator', text: 'https://example.com' });
+      await handleMessage(ctx, next);
+      expect(ctx.api.banChatMember).not.toHaveBeenCalled();
+    }
   });
 
   it('限制期內正常的相簿不會被刪', async () => {
