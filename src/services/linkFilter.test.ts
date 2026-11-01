@@ -173,6 +173,15 @@ describe('containsExternalCarrier', () => {
     expect(containsExternalCarrier({ ...base, rich_message: { blocks: [] } })).toBe(true);
   });
 
+  it('分享聯絡人算外部載體（卡片按鈕直接開私訊）', () => {
+    expect(
+      containsExternalCarrier({
+        ...base,
+        contact: { phone_number: '+447541004759', first_name: '免稅香烟全网最低价', user_id: 42 },
+      })
+    ).toBe(true);
+  });
+
   it('一般文字訊息不算', () => {
     expect(containsExternalCarrier({ ...base, text: '早安' })).toBe(false);
   });

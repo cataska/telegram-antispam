@@ -53,12 +53,15 @@ function opensExternal(button: InlineKeyboardButton): boolean {
 // - via_bot：透過 inline bot 送出的內容，標頭就是那個 bot
 // - guest bot 代發：訊息的發送者就是那個 bot
 // - rich_message：只有 bot 能送，內容結構自帶連結與按鈕，出現即代表 bot 產生的內容
+// - contact：聯絡人卡片附「傳訊息／加入聯絡人」按鈕，點下去直接開私訊，
+//   名稱欄位就是廣告詞（例：「免稅香烟全网最低价」+ 電話）
 // - inline keyboard 裡會開外部目標的按鈕
 export function containsExternalCarrier(msg: Message): boolean {
   if (msg.forward_origin) return true;
   if (msg.via_bot) return true;
   if (msg.guest_bot_caller_user || msg.guest_bot_caller_chat) return true;
   if (msg.rich_message) return true;
+  if (msg.contact) return true;
   if (msg.reply_markup?.inline_keyboard?.some((row) => row.some(opensExternal))) return true;
   return false;
 }
