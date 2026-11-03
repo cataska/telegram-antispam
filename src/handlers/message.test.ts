@@ -24,6 +24,7 @@ interface CtxOptions {
   captionEntities?: Array<Record<string, unknown>>;
   richMessage?: Record<string, unknown>;
   guestCallerUser?: Record<string, unknown>;
+  contact?: Record<string, unknown>;
   fromId?: number;
   deleteFails?: boolean;
 }
@@ -43,6 +44,7 @@ function makeCtx(opts: CtxOptions) {
     caption_entities: opts.captionEntities,
     rich_message: opts.richMessage,
     guest_bot_caller_user: opts.guestCallerUser,
+    contact: opts.contact,
   };
   return {
     chat: { id: opts.chatId, type: opts.chatType ?? 'supergroup' },
@@ -413,6 +415,51 @@ describe('handleMessage', () => {
         expect(ctx.api.unbanChatMember).toHaveBeenCalledWith(chatId, userId);
       }
     }
+  });
+
+  it('限制期內分享聯絡人卡片第一次就永久封鎖（不解封）', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      contact: { phone_number: '+440000000000', first_name: '1:1仿真假钞' },
+    });
+
+    await handleMessage(ctx, vi.fn());
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
+    expect(ctx.api.unbanChatMember).not.toHaveBeenCalled();
+  });
+
+  it('管理員在限制期內分享聯絡人卡片不會被封鎖', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      memberStatus: 'administrator',
+      contact: { phone_number: '+886900000000', first_name: 'Admin' },
+    });
+
+    await handleMessage(ctx, vi.fn());
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(ctx.api.banChatMember).not.toHaveBeenCalled();
+  });
+
+  it('老成員分享聯絡人卡片不受限', async () => {
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      contact: { phone_number: '+886900000000', first_name: 'Friend' },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(ctx.api.banChatMember).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
   });
 
   it('違規相簿整組只算一次違規', async () => {

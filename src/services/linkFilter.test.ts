@@ -177,7 +177,7 @@ describe('containsExternalCarrier', () => {
     expect(
       containsExternalCarrier({
         ...base,
-        contact: { phone_number: '+447541004759', first_name: '免稅香烟全网最低价', user_id: 42 },
+        contact: { phone_number: '+440000000000', first_name: '免稅香烟全网最低价', user_id: 42 },
       })
     ).toBe(true);
   });
