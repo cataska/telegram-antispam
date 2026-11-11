@@ -447,11 +447,43 @@ describe('handleMessage', () => {
     expect(ctx.api.banChatMember).not.toHaveBeenCalled();
   });
 
-  it('老成員分享聯絡人卡片不受限', async () => {
+  it('限制期已過才分享聯絡人卡片仍然刪除並永久封鎖', async () => {
+    // 實際案例：加入 42.5 小時、等 24 小時限制期過了才發卡片
+    recordMemberJoin(chatId, userId, Date.now() - 42 * 3_600_000);
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      contact: { phone_number: '+440000000000', first_name: '装摄像头利润8k' },
+    });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
+    expect(ctx.api.unbanChatMember).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('沒有加入記錄的老成員分享聯絡人卡片也刪除並永久封鎖', async () => {
     const ctx = makeCtx({
       chatId,
       userId,
       contact: { phone_number: '+886900000000', first_name: 'Friend' },
+    });
+
+    await handleMessage(ctx, vi.fn());
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
+  });
+
+  it('管理員在限制期外分享聯絡人卡片不受限', async () => {
+    const ctx = makeCtx({
+      chatId,
+      userId,
+      memberStatus: 'creator',
+      contact: { phone_number: '+886900000000', first_name: 'Owner' },
     });
     const next = vi.fn();
 
@@ -459,6 +491,17 @@ describe('handleMessage', () => {
 
     expect(ctx.deleteMessage).not.toHaveBeenCalled();
     expect(ctx.api.banChatMember).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('限制期外的老成員發連結仍不受限（只有聯絡人卡片不看限制期）', async () => {
+    recordMemberJoin(chatId, userId, Date.now() - 42 * 3_600_000);
+    const ctx = makeCtx({ chatId, userId, text: 'https://clojure.org' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalled();
   });
 

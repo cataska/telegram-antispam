@@ -68,15 +68,16 @@ async function kickRepeatOffender(ctx: Context, chatId: number, userId: number) 
   }
 }
 
-// 聯絡人卡片不是正常人加入 24 小時內會做的事，內容本身就是廣告（名稱欄位即廣告詞），
+// 聯絡人卡片不是群裡正常人會做的事，內容本身就是廣告（名稱欄位即廣告詞），
 // 判定信號跟 CAS 名單同級：第一次就永久封鎖，不等累計次數。
+// 不看限制期：曾有帳號加入 42 小時、等限制期過了才發卡片。
 // 封鎖對已自行退群的帳號一樣有效，擋得住「發兩次沒效果就退群、換張卡片再回來」。
 async function banContactSpammer(ctx: Context, chatId: number, userId: number) {
   try {
     await ctx.api.banChatMember(chatId, userId);
-    console.log(`[連結過濾] 新成員 ${userId} 限制期內分享聯絡人卡片，已永久封鎖`);
+    console.log(`[連結過濾] 成員 ${userId} 分享聯絡人卡片，已永久封鎖`);
   } catch (e) {
-    console.log(`[連結過濾] 封鎖新成員 ${userId} 失敗：${e}`);
+    console.log(`[連結過濾] 封鎖成員 ${userId} 失敗：${e}`);
   }
 }
 
@@ -130,15 +131,17 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
   if (!userId) return next();
 
   // 1. 新成員在加入後的限制期內禁止發連結、@bot 提及、轉發、inline bot 內容，
-  //    屢犯者踢出；聯絡人卡片直接永久封鎖。綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
+  //    屢犯者踢出。綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
   //    真正的破口是「通過驗證後先潛伏、隔一段時間再發廣告」。
+  //    聯絡人卡片不分新舊成員（管理員除外），一律刪除並永久封鎖。
+  const isRecent = isRecentMember(chatId, userId, config.linkRestrictWindowMs);
   if (
-    isRecentMember(chatId, userId, config.linkRestrictWindowMs) &&
+    (isRecent || msg.contact) &&
     (await enforceContentRestriction(
       ctx,
       chatId,
       msg,
-      `新成員 ${userId}`,
+      `${isRecent ? '新成員' : '成員'} ${userId}`,
       () => isAdmin(ctx, chatId, userId),
       () =>
         msg.contact
