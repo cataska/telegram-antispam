@@ -9,7 +9,8 @@ let nextChatId = -100123;
 let chatId: number;
 const user = { id: 42, is_bot: false, first_name: 'New' };
 
-function makeCtx(oldStatus: string, newStatus: string) {
+function makeCtx(oldStatus: string, newStatus: string, firstName = 'New') {
+  const user = { id: 42, is_bot: false, first_name: firstName };
   return {
     chatMember: {
       chat: { id: chatId, type: 'supergroup' },
@@ -130,6 +131,17 @@ describe('handleNewMember', () => {
 
     await vi.advanceTimersByTimeAsync(100_000); // 第二次的 180 秒到期
     expect(ctx2.api.banChatMember).toHaveBeenCalled();
+  });
+
+  it('顯示名稱含網域者入群時直接永久封鎖，不出驗證題', async () => {
+    const ctx = makeCtx('left', 'member', '不降智AI中转站（gptzzz.ai）');
+
+    await handleNewMember(ctx);
+
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, user.id);
+    expect(ctx.api.unbanChatMember).not.toHaveBeenCalled();
+    expect(ctx.api.sendMessage).not.toHaveBeenCalled();
+    expect(getPending(chatId, user.id)).toBeUndefined();
   });
 
   it('CAS 命中者直接永久封鎖，不出驗證題', async () => {

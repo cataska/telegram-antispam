@@ -11,6 +11,19 @@ export function containsLink(text: string, entities: readonly MessageEntity[] = 
   return URL_REGEX.test(text);
 }
 
+// 顯示名稱不會被 Telegram 標 entity，廣告帳號寫的也多半是不帶 http 的裸網域
+// （例：「不降智AI中转站（gptzzz.ai）」），URL_REGEX 抓不到。
+// 只認常見 TLD：任意「字.字」會誤判 "J.Smith"、"Mr.Lin" 這類正常名字。
+const BARE_DOMAIN_REGEX =
+  /(?<![a-z0-9@.-])(?:t\.me|[a-z0-9-]{2,}\.(?:com|net|org|io|ai|cc|xyz|top|vip|app|dev|shop|site|info|biz|tv|cn|ru|tw|hk|gg|icu|club|online|link))(?![a-z0-9-])/i;
+
+// 顯示名稱本身就是廣告：名字會出現在成員列表、每則訊息的標頭與推播通知上，
+// 發一句無害的純文字就能把網址送到所有人眼前。
+export function nameContainsLink(user: { first_name: string; last_name?: string }): boolean {
+  const name = `${user.first_name} ${user.last_name ?? ''}`;
+  return URL_REGEX.test(name) || BARE_DOMAIN_REGEX.test(name);
+}
+
 // @bot 提及點一下就開啟該 bot 對話，效果等同連結，是廣告繞過連結過濾的載體。
 // 只認 bot（Telegram 規定 bot 帳號名必須以 bot 結尾）：@一般人是群內正常行為。
 // `/start@SomeBot` 這種帶 @ 的指令是 bot_command entity 而非 mention，

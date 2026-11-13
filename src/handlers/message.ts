@@ -2,7 +2,7 @@ import { Context, NextFunction } from 'grammy';
 import type { Message } from 'grammy/types';
 import { isRecentMember, recordViolation } from '../store/members.js';
 import { checkRateLimit } from '../services/rateLimit.js';
-import { containsRestrictedContent } from '../services/linkFilter.js';
+import { containsRestrictedContent, nameContainsLink } from '../services/linkFilter.js';
 import { trackAlbumMessage, flagAlbum } from '../services/albumTracker.js';
 import { config } from '../config.js';
 
@@ -50,9 +50,10 @@ async function enforceContentRestriction(
 }
 
 // 只刪訊息擋不住會持續嘗試的帳號：潛伏過驗證後每隔幾分鐘發一次，
-// 間隔遠大於洪水視窗，刪幾次都不會停。累計到門檻就踢出（可重新加入，
-// 但得重新驗證、限制期與違規次數也重新起算）。
-async function kickRepeatOffender(ctx: Context, chatId: number, userId: number) {
+// 間隔遠大於洪水視窗，刪幾次都不會停。累計到門檻就永久封鎖。
+// 原本是踢出後可重新加入，但實際遇到的是整批帳號輪流進來、各自把額度用完：
+// 放回去沒有任何好處，封鎖至少讓每個帳號只能用一次。
+async function banRepeatOffender(ctx: Context, chatId: number, userId: number) {
   const threshold = config.linkViolationKickThreshold;
   if (threshold <= 0) return;
 
@@ -61,11 +62,24 @@ async function kickRepeatOffender(ctx: Context, chatId: number, userId: number) 
 
   try {
     await ctx.api.banChatMember(chatId, userId);
-    await ctx.api.unbanChatMember(chatId, userId); // 允許重新加入
-    console.log(`[連結過濾] 新成員 ${userId} 限制期內第 ${violations} 次違規，踢出群組`);
+    console.log(`[連結過濾] 新成員 ${userId} 限制期內第 ${violations} 次違規，已永久封鎖`);
   } catch (e) {
-    console.log(`[連結過濾] 踢出新成員 ${userId} 失敗：${e}`);
+    console.log(`[連結過濾] 封鎖新成員 ${userId} 失敗：${e}`);
   }
+}
+
+// 顯示名稱帶網址的新成員：不管這則訊息寫什麼都刪除並永久封鎖。
+// 入群時也會檢查，這裡擋的是「用普通名字通過驗證、之後才改名」的帳號——
+// bot 收不到改名事件，只能在對方發言時從 from 讀到當下的名字。
+// 先封鎖再刪：刪除失敗會往外拋，封鎖不該被它擋掉。
+async function banLinkNamedMember(ctx: Context, chatId: number, userId: number) {
+  try {
+    await ctx.api.banChatMember(chatId, userId);
+    console.log(`[名稱過濾] 新成員 ${userId} 的顯示名稱含連結，已永久封鎖`);
+  } catch (e) {
+    console.log(`[名稱過濾] 封鎖新成員 ${userId} 失敗：${e}`);
+  }
+  await ctx.deleteMessage();
 }
 
 // 聯絡人卡片不是群裡正常人會做的事，內容本身就是廣告（名稱欄位即廣告詞），
@@ -131,10 +145,17 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
   if (!userId) return next();
 
   // 1. 新成員在加入後的限制期內禁止發連結、@bot 提及、轉發、inline bot 內容，
-  //    屢犯者踢出。綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
+  //    屢犯者永久封鎖。綁在驗證狀態上是擋不到廣告的：驗證期間本來就全靜音，
   //    真正的破口是「通過驗證後先潛伏、隔一段時間再發廣告」。
   //    聯絡人卡片不分新舊成員（管理員除外），一律刪除並永久封鎖。
   const isRecent = isRecentMember(chatId, userId, config.linkRestrictWindowMs);
+
+  const sender = msg.guest_bot_caller_user ?? ctx.from;
+  if (isRecent && sender && nameContainsLink(sender) && !(await isAdmin(ctx, chatId, userId))) {
+    await banLinkNamedMember(ctx, chatId, userId);
+    return;
+  }
+
   if (
     (isRecent || msg.contact) &&
     (await enforceContentRestriction(
@@ -146,7 +167,7 @@ export async function handleMessage(ctx: Context, next: NextFunction) {
       () =>
         msg.contact
           ? banContactSpammer(ctx, chatId, userId)
-          : kickRepeatOffender(ctx, chatId, userId)
+          : banRepeatOffender(ctx, chatId, userId)
     ))
   ) {
     return;

@@ -26,6 +26,8 @@ interface CtxOptions {
   guestCallerUser?: Record<string, unknown>;
   contact?: Record<string, unknown>;
   fromId?: number;
+  firstName?: string;
+  lastName?: string;
   deleteFails?: boolean;
 }
 
@@ -48,7 +50,7 @@ function makeCtx(opts: CtxOptions) {
   };
   return {
     chat: { id: opts.chatId, type: opts.chatType ?? 'supergroup' },
-    from: { id: opts.fromId ?? opts.userId, first_name: 'Test' },
+    from: { id: opts.fromId ?? opts.userId, first_name: opts.firstName ?? 'Test', last_name: opts.lastName },
     me: { username: 'test_bot' },
     msg,
     message: opts.edited ? undefined : msg,
@@ -399,7 +401,7 @@ describe('handleMessage', () => {
     expect(ctx.deleteMessage).toHaveBeenCalled();
   });
 
-  it('限制期內第 3 次違規踢出（可重新加入）：慢速重試間隔遠大於洪水視窗也擋得到', async () => {
+  it('限制期內第 3 次違規永久封鎖（不解封）：慢速重試間隔遠大於洪水視窗也擋得到', async () => {
     recordMemberJoin(chatId, userId, Date.now() - 13 * 3_600_000);
     const next = vi.fn();
 
@@ -412,9 +414,64 @@ describe('handleMessage', () => {
         expect(ctx.api.banChatMember).not.toHaveBeenCalled();
       } else {
         expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
-        expect(ctx.api.unbanChatMember).toHaveBeenCalledWith(chatId, userId);
+        expect(ctx.api.unbanChatMember).not.toHaveBeenCalled();
       }
     }
+  });
+
+  it('限制期內顯示名稱含網域的新成員發純文字：刪除並永久封鎖（通過驗證後才改名）', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({ chatId, userId, firstName: '不降智AI中转站（gptzzz.ai）', text: '我想引起你们的注意' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
+    expect(ctx.api.unbanChatMember).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('網域寫在 last_name 也會被抓到', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({ chatId, userId, firstName: 'AI中转站', lastName: 'gptzzz.ai', text: 'hi' });
+
+    await handleMessage(ctx, vi.fn());
+
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
+  });
+
+  it('顯示名稱含網域：刪訊息失敗仍然封鎖', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({ chatId, userId, firstName: 'x gptzzz.ai', text: 'hi', deleteFails: true });
+
+    await expect(handleMessage(ctx, vi.fn())).rejects.toThrow();
+
+    expect(ctx.api.banChatMember).toHaveBeenCalledWith(chatId, userId);
+  });
+
+  it('限制期已過的成員顯示名稱含網域不受影響', async () => {
+    recordMemberJoin(chatId, userId, Date.now() - 25 * 3_600_000);
+    const ctx = makeCtx({ chatId, userId, firstName: 'Allen (example.com)', text: 'hi' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(ctx.api.banChatMember).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('管理員在限制期內顯示名稱含網域不受影響', async () => {
+    recordMemberJoin(chatId, userId);
+    const ctx = makeCtx({ chatId, userId, memberStatus: 'administrator', firstName: 'Allen (example.com)', text: 'hi' });
+    const next = vi.fn();
+
+    await handleMessage(ctx, next);
+
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(ctx.api.banChatMember).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
   });
 
   it('限制期內分享聯絡人卡片第一次就永久封鎖（不解封）', async () => {

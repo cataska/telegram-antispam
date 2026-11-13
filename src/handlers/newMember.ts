@@ -9,6 +9,7 @@ import { recordJoin } from '../services/joinFlood.js';
 import { markRemoved } from '../store/recentlyRemoved.js';
 import { muteForVerification, liftRestrictions } from './restrictions.js';
 import { recordMemberJoin, pruneMembers } from '../store/members.js';
+import { nameContainsLink } from '../services/linkFilter.js';
 
 export async function handleNewMember(ctx: Context) {
   const update = ctx.chatMember;
@@ -52,8 +53,14 @@ export async function handleNewMember(ctx: Context) {
     return;
   }
 
-  // 2. CAS 檢查：已知 spammer 直接永久封鎖
-  if (await isCasBanned(userId)) {
+  // 2. 顯示名稱含連結（名字本身就是廣告）或在 CAS 名單上：直接永久封鎖，不出驗證題。
+  //    名稱檢查不打網路，放前面。
+  const banReason = nameContainsLink(user)
+    ? '名稱過濾'
+    : (await isCasBanned(userId))
+      ? 'CAS'
+      : undefined;
+  if (banReason) {
     const stale = getPending(chatId, userId);
     if (stale) {
       resolvePending(chatId, userId);
@@ -61,7 +68,11 @@ export async function handleNewMember(ctx: Context) {
     }
     markRemoved(chatId, userId);
     await ctx.api.banChatMember(chatId, userId);
-    console.log(`[CAS] 用戶 ${userId} 在 CAS 名單上，已永久封鎖（群組 ${chatId}）`);
+    console.log(
+      banReason === 'CAS'
+        ? `[CAS] 用戶 ${userId} 在 CAS 名單上，已永久封鎖（群組 ${chatId}）`
+        : `[名稱過濾] 用戶 ${userId} 的顯示名稱含連結，已永久封鎖（群組 ${chatId}）`
+    );
     return;
   }
 

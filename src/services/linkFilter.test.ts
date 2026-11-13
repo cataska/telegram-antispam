@@ -1,5 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { containsLink, containsBotMention, containsExternalCarrier } from './linkFilter.js';
+import { containsLink, containsBotMention, containsExternalCarrier, nameContainsLink } from './linkFilter.js';
+
+describe('nameContainsLink', () => {
+  const hit = (first_name: string, last_name?: string) => nameContainsLink({ first_name, last_name });
+
+  it('偵測名稱裡的裸網域與連結', () => {
+    expect(hit('不降智AI中转站（gptzzz.ai）')).toBe(true);
+    expect(hit('加群 t.me/somegroup')).toBe(true);
+    expect(hit('客服', 'https://spam.example')).toBe(true);
+    expect(hit('低价', 'SPAM-SITE.COM')).toBe(true);
+    expect(hit('优惠 abc.xyz/join')).toBe(true);
+  });
+
+  it('正常名字不誤判', () => {
+    expect(hit('Wen-Chun', 'Lin')).toBe(false);
+    expect(hit('J.Smith')).toBe(false);
+    expect(hit('Mr.Lin')).toBe(false);
+    expect(hit('Dr. Top')).toBe(false);
+    expect(hit('王小明')).toBe(false);
+    expect(hit('v1.0')).toBe(false);
+    expect(hit('Node.js')).toBe(false);
+    expect(hit('a.i')).toBe(false);
+    expect(hit('someone@gmail.com')).toBe(false);
+  });
+});
+
 
 describe('containsLink', () => {
   it('偵測 http/https 連結', () => {
